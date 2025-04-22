@@ -31,7 +31,7 @@ for k in list(MIR_QUALITIES.keys()) + ['7(b9)', '7(#9)', '7(#11)', '7(b13)']:
     _, semitone_bitmap, _ = mir_eval.chord.encode( 'C' + (len(k) > 0)*':' + k, reduce_extended_chords=True )
     EXT_MIR_QUALITIES[k] = semitone_bitmap
 
-class CSMLMDiffTokenizer(PreTrainedTokenizer):
+class CSMLMDifTokenizer(PreTrainedTokenizer):
     def __init__(self, quantization='16th', fixed_length=None, vocab=None, special_tokens=None, **kwargs):
         self.unk_token = '<unk>'
         self.pad_token = '<pad>'
@@ -310,6 +310,11 @@ class CSMLMDiffTokenizer(PreTrainedTokenizer):
     def encode(self, file_path):
         # Load the score and flatten
         score = converter.parse(file_path)
+        time_signature = score.recurse().getElementsByClass(meter.TimeSignature).first()
+        ts_num_list = [0]*14
+        ts_den_list = [0,0]
+        ts_num_list[ int( min( max(time_signature.numerator-2,0) , 13) ) ] = 1
+        ts_den_list[ int( time_signature.denominator == 4 ) ] = 1
         melody_part = score.parts[0].flat
 
         # Define quantization note length
@@ -403,7 +408,7 @@ class CSMLMDiffTokenizer(PreTrainedTokenizer):
 
         # Apply fixed length (pad or trim)
         if self.fixed_length is not None:
-            if n_steps > self.fixed_length:
+            if n_steps >= self.fixed_length:
                 full_pianoroll = full_pianoroll[:self.fixed_length]
                 chord_tokens = chord_tokens[:self.fixed_length]
                 chord_token_ids = chord_token_ids[:self.fixed_length]
@@ -423,6 +428,7 @@ class CSMLMDiffTokenizer(PreTrainedTokenizer):
             'input_tokens': chord_tokens,
             'input_ids': chord_token_ids,
             'pianoroll': full_pianoroll,
+            'time_signature': ts_num_list + ts_den_list,
             'attention_mask': attention_mask
         }
     # end encode
