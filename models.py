@@ -6,7 +6,7 @@ class MLMDifMelHarm(nn.Module):
                  chord_vocab_size,  # V
                  d_model=512, 
                  nhead=8, 
-                 num_layers=6, 
+                 num_layers=8, 
                  dim_feedforward=2048,
                  conditioning_dim=16,
                  pianoroll_dim=100,
