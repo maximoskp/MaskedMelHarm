@@ -31,7 +31,7 @@ for k in list(MIR_QUALITIES.keys()) + ['7(b9)', '7(#9)', '7(#11)', '7(b13)']:
     _, semitone_bitmap, _ = mir_eval.chord.encode( 'C' + (len(k) > 0)*':' + k, reduce_extended_chords=True )
     EXT_MIR_QUALITIES[k] = semitone_bitmap
 
-class CSMLMDifTokenizer(PreTrainedTokenizer):
+class CSGridMLMTokenizer(PreTrainedTokenizer):
     def __init__(self, quantization='16th', fixed_length=None, vocab=None, special_tokens=None, **kwargs):
         self.unk_token = '<unk>'
         self.pad_token = '<pad>'

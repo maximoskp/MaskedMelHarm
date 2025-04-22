@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-class MLMDifMelHarm(nn.Module):
+class GridMLMMelHarm(nn.Module):
     def __init__(self, 
                  chord_vocab_size,  # V
                  d_model=512, 
@@ -79,4 +79,4 @@ class MLMDifMelHarm(nn.Module):
 
         return harmony_output
     # end forward
-# end class MLMDifMelHarm
+# end class GridMLMMelHarm
