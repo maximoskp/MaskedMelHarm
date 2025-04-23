@@ -3,10 +3,10 @@
 # List of Python scripts with their respective arguments
 
 scripts=(
-    "train_gmlm.py -c no -s 4 -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 0 -e 50 -l 5e-5 -b 16"
-    "train_gmlm.py -c random -s 4 -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 0 -e 50 -l 5e-5 -b 16"
-    "train_gmlm.py -c ts_blank -s 4 -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 1 -e 50 -l 5e-5 -b 16"
-    "train_gmlm.py -c ts_incr -s 4 -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 1 -e 50 -l 5e-5 -b 16"
+    "train_gmlm.py -c no -s 4 -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 0 -e 100 -l 5e-5 -b 16"
+    "train_gmlm.py -c random -s 4 -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 0 -e 100 -l 5e-5 -b 16"
+    "train_gmlm.py -c ts_blank -s 4 -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 1 -e 100 -l 5e-5 -b 16"
+    "train_gmlm.py -c ts_incr -s 4 -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 1 -e 100 -l 5e-5 -b 16"
 )
 
 # Name of the conda environment
