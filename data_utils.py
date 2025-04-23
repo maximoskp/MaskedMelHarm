@@ -4,6 +4,7 @@ from GridMLM_tokenizers import CSGridMLMTokenizer
 import os
 import numpy as np
 from music21 import converter, note, chord, harmony, meter, stream
+import torch.nn.functional as F
 
 def extract_lead_sheet_info(xml_path, quantization='16th', fixed_length=None):
     # Load the score and flatten

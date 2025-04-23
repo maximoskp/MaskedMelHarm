@@ -3,34 +3,11 @@
 # List of Python scripts with their respective arguments
 
 scripts=(
-    "train_mlm.py -t ChordSymbolTokenizer -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 0 -e 50 -l 5e-5 -b 6"
-    "train_mlm.py -t RootTypeTokenizer -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 1 -e 50 -l 5e-5 -b 6"
-    "train_mlm.py -t PitchClassTokenizer -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 2 -e 50 -l 5e-5 -b 6"
-    "train_mlm.py -t RootPCTokenizer -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 0 -e 50 -l 5e-5 -b 6"
-    "train_gpt.py -t ChordSymbolTokenizer -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 0 -e 50 -l 5e-5 -b 6"
-    "train_gpt.py -t RootTypeTokenizer -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 1 -e 50 -l 5e-5 -b 6"
-    "train_gpt.py -t PitchClassTokenizer -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 2 -e 50 -l 5e-5 -b 6"
-    "train_gpt.py -t RootPCTokenizer -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 1 -e 50 -l 5e-5 -b 6"
-    "train_bart.py -t ChordSymbolTokenizer -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 0 -e 50 -l 5e-5 -b 6"
-    "train_bart.py -t RootTypeTokenizer -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 1 -e 50 -l 5e-5 -b 6"
-    "train_bart.py -t PitchClassTokenizer -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 2 -e 50 -l 5e-5 -b 6"
-    "train_bart.py -t RootPCTokenizer -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 2 -e 50 -l 5e-5 -b 6"
+    "train_gmlm.py -c no -s 4 -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 0 -e 50 -l 5e-5 -b 16"
+    "train_gmlm.py -c random -s 4 -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 0 -e 50 -l 5e-5 -b 16"
+    "train_gmlm.py -c ts_blank -s 4 -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 1 -e 50 -l 5e-5 -b 16"
+    "train_gmlm.py -c ts_incr -s 4 -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 1 -e 50 -l 5e-5 -b 16"
 )
-
-# scripts=(
-#     "train_mlm.py -t ChordSymbolTokenizer -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 0 -e 10 -l 5e-5 -b 6"
-#     "train_mlm.py -t RootTypeTokenizer -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 1 -e 10 -l 5e-5 -b 6"
-#     "train_mlm.py -t PitchClassTokenizer -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 2 -e 10 -l 5e-5 -b 6"
-#     "train_mlm.py -t RootPCTokenizer -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 0 -e 10 -l 5e-5 -b 6"
-#     "train_gpt.py -t ChordSymbolTokenizer -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 0 -e 10 -l 5e-5 -b 6"
-#     "train_gpt.py -t RootTypeTokenizer -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 1 -e 10 -l 5e-5 -b 6"
-#     "train_gpt.py -t PitchClassTokenizer -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 2 -e 10 -l 5e-5 -b 6"
-#     "train_gpt.py -t RootPCTokenizer -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 1 -e 10 -l 5e-5 -b 6"
-#     "train_bart.py -t ChordSymbolTokenizer -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 0 -e 10 -l 5e-5 -b 6"
-#     "train_bart.py -t RootTypeTokenizer -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 1 -e 10 -l 5e-5 -b 6"
-#     "train_bart.py -t PitchClassTokenizer -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 2 -e 10 -l 5e-5 -b 6"
-#     "train_bart.py -t RootPCTokenizer -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 2 -e 10 -l 5e-5 -b 6"
-# )
 
 # Name of the conda environment
 conda_env="torch"

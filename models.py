@@ -11,7 +11,7 @@ class GridMLMMelHarm(nn.Module):
                  conditioning_dim=16,
                  pianoroll_dim=100,
                  grid_length=256,
-                 device='cuda'):
+                 device='cpu'):
         super().__init__()
         self.device = device
         self.to(device)
