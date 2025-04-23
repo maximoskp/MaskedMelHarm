@@ -73,9 +73,10 @@ def apply_structured_masking(harmony_tokens,
                 reveal_indices = random.sample(valid_indices.tolist(), n_reveal)
                 masked_harmony[i, reveal_indices] = harmony_tokens[i, reveal_indices]
             target_to_learn = masked_harmony == mask_token_id
-    target[~target_to_learn] = -100  # ignore tokens that were shown to the model
     if curriculum_type == 'ts_incr' and step_idx > 0:
         masked_harmony[input_unmask] = harmony_tokens[input_unmask]
+        target_to_learn[input_unmask] = False
+    target[~target_to_learn] = -100  # ignore tokens that were shown to the model
     return masked_harmony, target
 # end apply_structured_masking
 
