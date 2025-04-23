@@ -190,16 +190,16 @@ def validation_loop(model, valloader, mask_token_id, loss_fn, epoch, step_idx, t
 
 def train_with_curriculum(
     model, optimizer, trainloader, valloader, loss_fn, mask_token_id,
-    epochs=50,
+    epochs=100,
     curriculum_type='no',  # 'no', 'random', 'ts_blank', 'ts_incr'
     curriculum_steps='linear', # 'linear', mixed
-    epochs_per_stage=4,
+    epochs_per_stage=10,
     results_path=None,
     transformer_path=None
 ):
     device = next(model.parameters()).device
     perplexity_metric.to(device)
-    max_step_idx = 4
+    max_step_idx = 5
     best_val_loss = np.inf
     saving_version = 0
 
