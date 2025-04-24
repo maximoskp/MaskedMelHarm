@@ -100,7 +100,7 @@ def get_stage_mixed(epoch, max_epoch, max_stage):
     return torch.multinomial(probs, 1).item()
 # end get_stage_mixed
 
-def validation_loop(model, valloader, mask_token_id, loss_fn, epoch, step, stage, train_loss, train_accuracy, \
+def validation_loop(model, valloader, mask_token_id, loss_fn, epoch, step, stage, stage_aware, train_loss, train_accuracy, \
                     train_perplexity, train_token_entropy,
                     best_val_loss, saving_version, results_path=None, transformer_path=None):
     val_loss = 0
@@ -142,7 +142,12 @@ def validation_loop(model, valloader, mask_token_id, loss_fn, epoch, step, stage
                 )
 
                 # Forward pass
-                logits = model(conditioning_vec, melody_grid, harmony_input)
+                logits = model(
+                    conditioning_vec,
+                    melody_grid,
+                    harmony_input,
+                    None if not stage_aware else stage
+                )
 
                 # Compute loss only on masked tokens
                 loss = loss_fn(logits.view(-1, logits.size(-1)), harmony_target.view(-1))
@@ -299,6 +304,7 @@ def train_with_curriculum(
                         epoch,
                         step,
                         stage,
+                        stage_aware,
                         train_loss,
                         train_accuracy,
                         train_perplexity,
