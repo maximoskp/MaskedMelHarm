@@ -72,12 +72,6 @@ def main():
     )
     model.to(device)
     optimizer = AdamW(model.parameters(), lr=lr)
-    
-    # # Compute total training steps
-    # total_steps = len(trainloader) * epochs
-    # # Define the scheduler
-    # warmup_steps = int(0.02 * total_steps)  # 10% of total steps for warmup
-    # scheduler = get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=warmup_steps, num_training_steps=total_steps)
 
     # save results
     os.makedirs('results/', exist_ok=True)

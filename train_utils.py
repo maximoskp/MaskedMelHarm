@@ -7,6 +7,7 @@ import random
 import csv
 import numpy as np
 import os
+from transformers import get_cosine_schedule_with_warmup
 # TODO:
 # validation loop
 # save model
@@ -17,13 +18,13 @@ perplexity_metric = Perplexity(ignore_index=-100)
 
 def apply_structured_masking(harmony_tokens,
     mask_token_id,
-    step_idx,
+    stage,
     time_sigs,
     curriculum_type='no'):
     """
     harmony_tokens: (B, time_step) - original ground truth tokens
     mask_token_id: int - ID for the special <mask> token
-    step_idx: int - 0, 1, 2, etc.
+    stage: int - stage of uncovering masks 0, 1, 2 ...
     time_sigs: batch of 16-item binary encodings of time signature for each item
     curriculum_type: how to progress with masking
     - 'no': all tokens are masked and the model needs to learn to unmask all
@@ -52,7 +53,7 @@ def apply_structured_masking(harmony_tokens,
         dtype=torch.bool,
         device=device
     )
-    if curriculum_type == 'ts_incr' and step_idx > 0:
+    if curriculum_type == 'ts_incr' and stage > 0:
         # some tokens need to be revealed in the input for incremental learning
         input_unmask = torch.full_like( harmony_tokens, 0, dtype=torch.bool, device=device )
 
@@ -62,44 +63,44 @@ def apply_structured_masking(harmony_tokens,
             ts_num = torch.nonzero(time_sigs[i, :14])[0] + 2
             ts_den = torch.nonzero(time_sigs[i, 14:])[0]*8 - 4
             spacing_schedule = [ 16*ts_num//(ts_den//4), 8*ts_num//(ts_den//4), 4*ts_num//(ts_den//4) , 2*ts_num//(ts_den//4) , 1*ts_num//(ts_den//4) ]
-            spacing = spacing_schedule[step_idx] if step_idx < len(spacing_schedule) else 1
+            spacing = spacing_schedule[stage] if stage < len(spacing_schedule) else 1
 
             # Get the indices that will remain unmasked for this step
             target_to_learn[i, ::spacing] = True  # reveal tokens at spacing in target
-            if curriculum_type == 'ts_incr' and step_idx > 0:
-                spacing = spacing_schedule[step_idx-1] if step_idx-1 < len(spacing_schedule) else spacing_schedule[-1]
+            if curriculum_type == 'ts_incr' and stage > 0:
+                spacing = spacing_schedule[stage-1] if stage-1 < len(spacing_schedule) else spacing_schedule[-1]
                 input_unmask[i, ::spacing] = True  # reveal tokens at spacing in harmony input
     if curriculum_type == 'random':
         step_ratios = {0: 0.8, 1: 0.6, 2: 0.4, 3: 0.2, 4: 0 }
         for i in range(B):
-            if step_idx < len(step_ratios):
-                step_ratio = step_ratios[step_idx]
+            if stage < len(step_ratios):
+                step_ratio = step_ratios[stage]
                 valid_indices = (harmony_tokens[i] != -1).nonzero(as_tuple=False).squeeze()
                 n_reveal = max(1, int(len(valid_indices) * step_ratio))
                 reveal_indices = random.sample(valid_indices.tolist(), n_reveal)
                 masked_harmony[i, reveal_indices] = harmony_tokens[i, reveal_indices]
             target_to_learn = masked_harmony == mask_token_id
-    if curriculum_type == 'ts_incr' and step_idx > 0:
+    if curriculum_type == 'ts_incr' and stage > 0:
         masked_harmony[input_unmask] = harmony_tokens[input_unmask]
         target_to_learn[input_unmask] = False
     target[~target_to_learn] = -100  # ignore tokens that were shown to the model
     return masked_harmony, target
 # end apply_structured_masking
 
-def get_step_idx_linear(epoch, epochs_per_stage, max_step_idx):
-    return min(epoch // epochs_per_stage, max_step_idx)
-# end get_step_idx_linear
+def get_stage_linear(epoch, epochs_per_stage, max_stage):
+    return min(epoch // epochs_per_stage, max_stage)
+# end get_stage_linear
 
-def get_step_idx_mixed(epoch, max_epoch, max_step_idx):
+def get_stage_mixed(epoch, max_epoch, max_stage):
     """Returns a random step index, biased toward early stages in early epochs."""
     progress = epoch / max_epoch
     probs = torch.softmax(torch.tensor([
-        (1.0 - abs(progress - (i / max_step_idx))) * 5 for i in range(max_step_idx + 1)
+        (1.0 - abs(progress - (i / max_stage))) * 5 for i in range(max_stage + 1)
     ]), dim=0)
     return torch.multinomial(probs, 1).item()
-# end get_step_idx_mixed
+# end get_stage_mixed
 
-def validation_loop(model, valloader, mask_token_id, loss_fn, epoch, step_idx, train_loss, train_accuracy, \
+def validation_loop(model, valloader, mask_token_id, loss_fn, epoch, step, stage, train_loss, train_accuracy, \
                     train_perplexity, train_token_entropy,
                     best_val_loss, saving_version, results_path=None, transformer_path=None):
     val_loss = 0
@@ -125,7 +126,7 @@ def validation_loop(model, valloader, mask_token_id, loss_fn, epoch, step_idx, t
         val_token_entropy = 0
         print('validation')
         with tqdm(valloader, unit='batch') as tepoch:
-            tepoch.set_description(f'Epoch {epoch} (step {step_idx}) | val')
+            tepoch.set_description(f'Epoch {epoch}/{step} (stg {stage}) | val')
             for batch in tepoch:
                 melody_grid = batch["pianoroll"].to(device)           # (B, 256, 140)
                 harmony_gt = batch["input_ids"].to(device)         # (B, 256)
@@ -166,10 +167,7 @@ def validation_loop(model, valloader, mask_token_id, loss_fn, epoch, step_idx, t
                 tepoch.set_postfix(loss=val_loss, accuracy=val_accuracy)
             # end for batch
     # end with tqdm
-    print('transformer_path: ', results_path)
     if transformer_path is not None:
-        print('best_val_loss: ', best_val_loss)
-        print('val_loss: ', val_loss)
         if best_val_loss > val_loss:
             print('saving!')
             saving_version += 1
@@ -180,7 +178,7 @@ def validation_loop(model, valloader, mask_token_id, loss_fn, epoch, step_idx, t
     if results_path is not None:
         with open( results_path, 'a' ) as f:
             writer = csv.writer(f)
-            writer.writerow( [epoch, step_idx, train_loss, train_accuracy, \
+            writer.writerow( [epoch, step, stage, train_loss, train_accuracy, \
                             train_perplexity, train_token_entropy, \
                             val_loss, val_accuracy, \
                             val_perplexity, val_token_entropy, \
@@ -199,27 +197,34 @@ def train_with_curriculum(
 ):
     device = next(model.parameters()).device
     perplexity_metric.to(device)
-    max_step_idx = 5
+    max_stage = 5
     best_val_loss = np.inf
     saving_version = 0
 
     # save results and model
     if results_path is not None:
-        result_fields = ['epoch', 'step_idx', 'train_loss', 'train_acc', \
+        result_fields = ['epoch', 'step', 'stage', 'train_loss', 'train_acc', \
                         'train_ppl', 'train_te', 'val_loss', \
                         'val_acc', 'val_ppl', 'val_te', 'sav_version']
         with open( results_path, 'w' ) as f:
             writer = csv.writer(f)
             writer.writerow( result_fields )
 
+    # Compute total training steps
+    total_steps = len(trainloader) * epochs
+    # Define the scheduler
+    warmup_steps = int(0.1 * total_steps)  # 10% of total steps for warmup
+    scheduler = get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=warmup_steps, num_training_steps=total_steps)
+    step = 0
+
     for epoch in range(epochs):
         model.train()
 
         # Determine masking level
         if curriculum_steps == "linear":
-            step_idx = get_step_idx_linear(epoch, epochs_per_stage, max_step_idx)
+            stage = get_stage_linear(epoch, epochs_per_stage, max_stage)
         elif curriculum_steps == "mixed":
-            step_idx = get_step_idx_mixed(epoch, epochs, max_step_idx)
+            stage = get_stage_mixed(epoch, epochs, max_stage)
         else:
             raise ValueError("Invalid curriculum steps")
 
@@ -233,7 +238,7 @@ def train_with_curriculum(
         running_token_entropy = 0
         train_token_entropy = 0
         with tqdm(trainloader, unit='batch') as tepoch:
-            tepoch.set_description(f'Epoch {epoch} (step {step_idx}) | trn')
+            tepoch.set_description(f'Epoch {epoch}/{step} (stg {stage}) | trn')
             for batch in tepoch:
                 melody_grid = batch["pianoroll"].to(device)           # (B, 256, 140)
                 harmony_gt = batch["input_ids"].to(device)         # (B, 256)
@@ -243,7 +248,7 @@ def train_with_curriculum(
                 harmony_input, harmony_target = apply_structured_masking(
                     harmony_gt,
                     mask_token_id,
-                    step_idx,
+                    stage,
                     conditioning_vec,
                     curriculum_type
                 )
@@ -261,6 +266,7 @@ def train_with_curriculum(
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+                scheduler.step()
 
                 # update loss and accuracy
                 batch_num += 1
@@ -280,23 +286,26 @@ def train_with_curriculum(
                 train_token_entropy = running_token_entropy/batch_num
 
                 tepoch.set_postfix(loss=train_loss, accuracy=train_accuracy)
+                step += 1
+                if step%(total_steps//100) == 0 or step == total_steps:
+                    best_val_loss, saving_version = validation_loop(
+                        model,
+                        valloader,
+                        mask_token_id,
+                        loss_fn,
+                        epoch,
+                        step,
+                        stage,
+                        train_loss,
+                        train_accuracy,
+                        train_perplexity,
+                        train_token_entropy,
+                        best_val_loss,
+                        saving_version,
+                        results_path=results_path,
+                        transformer_path=transformer_path
+                    )
             # end for batch
         # end with tqdm
-        best_val_loss, saving_version = validation_loop(
-            model,
-            valloader,
-            mask_token_id,
-            loss_fn,
-            epoch,
-            step_idx,
-            train_loss,
-            train_accuracy,
-            train_perplexity,
-            train_token_entropy,
-            best_val_loss,
-            saving_version,
-            results_path=results_path,
-            transformer_path=transformer_path
-        )
     # end for epoch
 # end train_with_curriculum
