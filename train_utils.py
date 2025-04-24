@@ -136,7 +136,7 @@ def validation_loop(model, valloader, mask_token_id, loss_fn, epoch, step, stage
                 harmony_input, harmony_target = apply_structured_masking(
                     harmony_gt,
                     mask_token_id,
-                    4,
+                    stage,
                     conditioning_vec,
                     'no'
                 )
@@ -193,7 +193,8 @@ def train_with_curriculum(
     curriculum_steps='linear', # 'linear', mixed
     epochs_per_stage=10,
     results_path=None,
-    transformer_path=None
+    transformer_path=None,
+    stage_aware=True
 ):
     device = next(model.parameters()).device
     perplexity_metric.to(device)
@@ -202,6 +203,7 @@ def train_with_curriculum(
     saving_version = 0
 
     # save results and model
+    print('results_path:', results_path)
     if results_path is not None:
         result_fields = ['epoch', 'step', 'stage', 'train_loss', 'train_acc', \
                         'train_ppl', 'train_te', 'val_loss', \
@@ -257,7 +259,8 @@ def train_with_curriculum(
                 logits = model(
                     conditioning_vec.to(device),
                     melody_grid.to(device),
-                    harmony_input.to(device)
+                    harmony_input.to(device),
+                    None if not stage_aware else stage
                 )
 
                 # Compute loss only on masked tokens

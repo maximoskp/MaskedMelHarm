@@ -12,6 +12,7 @@ class GridMLMMelHarm(nn.Module):
                  pianoroll_dim=100,
                  grid_length=256,
                  dropout=0.3,
+                 max_stages=6,
                  device='cpu'):
         super().__init__()
         self.device = device
@@ -29,6 +30,13 @@ class GridMLMMelHarm(nn.Module):
         self.pos_embedding = nn.Parameter(torch.randn(1, self.seq_len, d_model)).to(self.device)
         # Dropout
         self.dropout = nn.Dropout(dropout)
+        # embedding for curriculum stage
+        self.max_stages = max_stages
+        self.stage_embedding_dim = 64
+        self.stage_embedding = nn.Embedding(self.max_stages, self.stage_embedding_dim, device=self.device)
+        # New projection layer to go from (d_model + stage_embedding_dim) → d_model
+        self.stage_proj = nn.Linear(self.d_model + self.stage_embedding_dim, self.d_model, device=self.device)
+
         # Transformer Encoder
         encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, 
                                                    nhead=nhead, 
@@ -47,7 +55,7 @@ class GridMLMMelHarm(nn.Module):
         self.output_norm = nn.LayerNorm(d_model)
     # end init
 
-    def forward(self, conditioning_vec, melody_grid, harmony_tokens=None):
+    def forward(self, conditioning_vec, melody_grid, harmony_tokens=None, stage_idx=None):
         """
         conditioning_vec: (B, C)
         melody_grid: (B, grid_length, pianoroll_dim)
@@ -73,6 +81,15 @@ class GridMLMMelHarm(nn.Module):
 
         # Add positional encoding
         full_seq = full_seq + self.pos_embedding[:, :self.seq_len, :]
+        if stage_idx is not None and isinstance(stage_idx, int):
+            stage_idx = torch.full((B,), stage_idx, dtype=torch.long, device=self.device)
+            stage_emb = self.stage_embedding(stage_idx)  # (B, stage_embedding_dim)
+            stage_emb = stage_emb.unsqueeze(1).repeat(1, self.seq_len, 1)  # (B, seq_len, stage_embedding_dim)
+            # Concatenate along the feature dimension
+            full_seq = torch.cat([full_seq, stage_emb], dim=-1)  # (B, seq_len, d_model + stage_embedding_dim)
+            # Project back to d_model
+            full_seq = self.stage_proj(full_seq)  # (B, seq_len, d_model)
+
         full_seq = self.input_norm(full_seq)
         full_seq = self.dropout(full_seq)
 

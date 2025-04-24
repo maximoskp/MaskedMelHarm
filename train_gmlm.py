@@ -20,6 +20,7 @@ def main():
     # Define arguments
     parser.add_argument('-c', '--curriculum', type=str, help='Specify the curriculum type name among: ' + repr(curriculum_types), required=True)
     parser.add_argument('-s', '--stages', type=int, help='Specify the number of epochs per stage in the curriculum.', required=True)
+    parser.add_argument('-a', '--stage_aware', type=int, help='Model is stage aware (1) or not (0).', required=True)
     parser.add_argument('-d', '--datatrain', type=str, help='Specify the full path to the root folder of the training xml/mxl files', required=True)
     parser.add_argument('-v', '--dataval', type=str, help='Specify the full path to the root folder of the validation xml/mxl files', required=True)
     parser.add_argument('-g', '--gpu', type=int, help='Specify whether and which GPU will be used by used by index. Not using this argument means use CPU.', required=False)
@@ -31,6 +32,7 @@ def main():
     args = parser.parse_args()
     curriculum_type = args.curriculum
     epochs_per_stage = args.stages
+    stage_aware = args.stage_aware != 0
     # root_dir = '/media/maindisk/maximos/data/hooktheory_xmls'
     train_dir = args.datatrain
     val_dir = args.dataval
@@ -68,18 +70,19 @@ def main():
     model = GridMLMMelHarm(
         chord_vocab_size=len(tokenizer.vocab),
         conditioning_dim=16,
-        device=device
+        device=device,
+        max_stages=6
     )
     model.to(device)
     optimizer = AdamW(model.parameters(), lr=lr)
 
     # save results
     os.makedirs('results/', exist_ok=True)
-    results_path = 'results/' + curriculum_type + '.csv'
+    results_path = 'results/' + 'a_'*stage_aware + curriculum_type + '.csv'
     
     save_dir = 'saved_models/'
     os.makedirs(save_dir, exist_ok=True)
-    transformer_path = save_dir + curriculum_type + '.pt'
+    transformer_path = save_dir + 'a_'*stage_aware + curriculum_type + '.pt'
 
     train_with_curriculum(
         model, optimizer, trainloader, valloader, loss_fn, tokenizer.mask_token_id,
@@ -88,7 +91,8 @@ def main():
         curriculum_steps='linear', # 'linear', mixed
         epochs_per_stage=epochs_per_stage,
         results_path=results_path,
-        transformer_path=transformer_path
+        transformer_path=transformer_path,
+        stage_aware=stage_aware
     )
     
 # end main
