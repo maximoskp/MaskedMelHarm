@@ -100,18 +100,15 @@ def get_stage_mixed(epoch, max_epoch, max_stage):
     return torch.multinomial(probs, 1).item()
 # end get_stage_mixed
 
-def validation_loop(model, valloader, mask_token_id, loss_fn, epoch, step, stage, stage_aware, train_loss, train_accuracy, \
+def get_stage_uniform(epoch, max_epoch, max_stage):
+    """Returns a random step index, uniform across all stages."""
+    return np.random.randint(max_stage + 1)
+# end get_stage_uniform
+
+def validation_loop(model, valloader, mask_token_id, loss_fn, epoch, step, \
+                    curriculum_type, stage, stage_aware, train_loss, train_accuracy, \
                     train_perplexity, train_token_entropy,
                     best_val_loss, saving_version, results_path=None, transformer_path=None):
-    val_loss = 0
-    running_loss = 0
-    batch_num = 0
-    running_accuracy = 0
-    val_accuracy = 0
-    running_perplexity = 0
-    val_perplexity = 0
-    running_token_entropy = 0
-    val_token_entropy = 0
     device = model.device
     model.eval()
     with torch.no_grad():
@@ -128,6 +125,7 @@ def validation_loop(model, valloader, mask_token_id, loss_fn, epoch, step, stage
         with tqdm(valloader, unit='batch') as tepoch:
             tepoch.set_description(f'Epoch {epoch}/{step} (stg {stage}) | val')
             for batch in tepoch:
+                perplexity_metric.reset()
                 melody_grid = batch["pianoroll"].to(device)           # (B, 256, 140)
                 harmony_gt = batch["input_ids"].to(device)         # (B, 256)
                 conditioning_vec = batch["time_signature"].to(device)  # (B, C0)
@@ -138,7 +136,7 @@ def validation_loop(model, valloader, mask_token_id, loss_fn, epoch, step, stage
                     mask_token_id,
                     stage,
                     conditioning_vec,
-                    'no'
+                    curriculum_type
                 )
 
                 # Forward pass
@@ -195,7 +193,7 @@ def train_with_curriculum(
     model, optimizer, trainloader, valloader, loss_fn, mask_token_id,
     epochs=100,
     curriculum_type='no',  # 'no', 'random', 'ts_blank', 'ts_incr'
-    curriculum_steps='linear', # 'linear', mixed
+    curriculum_progression='uniform', # 'linear', 'mixed', 'uniform'
     epochs_per_stage=10,
     results_path=None,
     transformer_path=None,
@@ -225,15 +223,15 @@ def train_with_curriculum(
     step = 0
 
     for epoch in range(epochs):
-        model.train()
-
         # Determine masking level
-        if curriculum_steps == "linear":
+        if curriculum_progression == "linear":
             stage = get_stage_linear(epoch, epochs_per_stage, max_stage)
-        elif curriculum_steps == "mixed":
+        elif curriculum_progression == "mixed":
             stage = get_stage_mixed(epoch, epochs, max_stage)
+        elif curriculum_progression == "uniform":
+            stage = get_stage_uniform(epoch, epochs, max_stage)
         else:
-            raise ValueError("Invalid curriculum steps")
+            raise ValueError("Invalid curriculum_progressions")
 
         train_loss = 0
         running_loss = 0
@@ -247,6 +245,8 @@ def train_with_curriculum(
         with tqdm(trainloader, unit='batch') as tepoch:
             tepoch.set_description(f'Epoch {epoch}/{step} (stg {stage}) | trn')
             for batch in tepoch:
+                perplexity_metric.reset()
+                model.train()
                 melody_grid = batch["pianoroll"].to(device)           # (B, 256, 140)
                 harmony_gt = batch["input_ids"].to(device)         # (B, 256)
                 conditioning_vec = batch["time_signature"].to(device)  # (B, C0)
@@ -303,6 +303,7 @@ def train_with_curriculum(
                         loss_fn,
                         epoch,
                         step,
+                        curriculum_type,
                         stage,
                         stage_aware,
                         train_loss,
