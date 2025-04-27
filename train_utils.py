@@ -92,7 +92,10 @@ def get_stage_linear(epoch, epochs_per_stage, max_stage):
 # end get_stage_linear
 
 def get_stage_mixed(epoch, max_epoch, max_stage):
-    """Returns a random step index, biased toward early stages in early epochs."""
+    """Returns a random step index, biased toward early stages in early epochs.
+    Last epoch is only with maximum stage."""
+    if epoch >= max_epoch - 1:
+        return max_stage
     progress = epoch / max_epoch
     probs = torch.softmax(torch.tensor([
         (1.0 - abs(progress - (i / max_stage))) * 5 for i in range(max_stage + 1)
@@ -223,16 +226,6 @@ def train_with_curriculum(
     step = 0
 
     for epoch in range(epochs):
-        # Determine masking level
-        if curriculum_progression == "linear":
-            stage = get_stage_linear(epoch, epochs_per_stage, max_stage)
-        elif curriculum_progression == "mixed":
-            stage = get_stage_mixed(epoch, epochs, max_stage)
-        elif curriculum_progression == "uniform":
-            stage = get_stage_uniform(epoch, epochs, max_stage)
-        else:
-            raise ValueError("Invalid curriculum_progressions")
-
         train_loss = 0
         running_loss = 0
         batch_num = 0
@@ -242,6 +235,17 @@ def train_with_curriculum(
         train_perplexity = 0
         running_token_entropy = 0
         train_token_entropy = 0
+
+        # Determine masking level
+        if curriculum_progression == "linear":
+            stage = get_stage_linear(epoch, epochs_per_stage, max_stage)
+        elif curriculum_progression == "mixed":
+            stage = get_stage_mixed(epoch, epochs, max_stage)
+        elif curriculum_progression == "uniform":
+            stage = get_stage_uniform(epoch, epochs_per_stage, max_stage)
+        else:
+            raise ValueError("Invalid curriculum_progressions")
+
         with tqdm(trainloader, unit='batch') as tepoch:
             tepoch.set_description(f'Epoch {epoch}/{step} (stg {stage}) | trn')
             for batch in tepoch:
@@ -315,6 +319,15 @@ def train_with_curriculum(
                         results_path=results_path,
                         transformer_path=transformer_path
                     )
+                    # Redetermine masking level after validation loop
+                    if curriculum_progression == "linear":
+                        stage = get_stage_linear(epoch, epochs_per_stage, max_stage)
+                    elif curriculum_progression == "mixed":
+                        stage = get_stage_mixed(epoch, epochs, max_stage)
+                    elif curriculum_progression == "uniform":
+                        stage = get_stage_uniform(epoch, epochs_per_stage, max_stage)
+                    else:
+                        raise ValueError("Invalid curriculum_progressions")
             # end for batch
         # end with tqdm
     # end for epoch
