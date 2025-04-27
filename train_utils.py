@@ -83,7 +83,9 @@ def apply_structured_masking(harmony_tokens,
     if curriculum_type == 'ts_incr' and stage > 0:
         masked_harmony[input_unmask] = harmony_tokens[input_unmask]
         target_to_learn[input_unmask] = False
-    target[~target_to_learn] = -100  # ignore tokens that were shown to the model
+        target[~torch.logical_or( target_to_learn , input_unmask )] = -100  # ignore tokens that were not shown to the model
+    if curriculum_type == 'ts_blank':
+        target[~target_to_learn] = -100  # ignore tokens that were shown to the model
     return masked_harmony, target
 # end apply_structured_masking
 

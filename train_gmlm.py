@@ -82,7 +82,7 @@ def main():
     os.makedirs('results/' + curriculum_progression + '/', exist_ok=True)
     results_path = 'results/' + curriculum_progression + '/' + 'a_'*stage_aware + curriculum_type + '.csv'
     
-    save_dir = 'saved_models/'
+    save_dir = 'saved_models/' + curriculum_progression + '/'
     os.makedirs(save_dir, exist_ok=True)
     transformer_path = save_dir + 'a_'*stage_aware + curriculum_type + '.pt'
 
