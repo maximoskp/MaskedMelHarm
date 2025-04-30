@@ -1,4 +1,5 @@
 saved_models/
+figs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

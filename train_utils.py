@@ -16,10 +16,88 @@ from transformers import get_cosine_schedule_with_warmup
 
 perplexity_metric = Perplexity(ignore_index=-100)
 
+def random_progressive_masking(harmony_tokens, stage, total_stages, mask_token_id):
+    """
+    Generate visible input and denoising target for diffusion-style training.
+
+    Args:
+        harmony_tokens (torch.Tensor): Tensor of shape (B, L) containing target harmony token ids.
+        stage (int): Current training stage (0 to total_stages - 1).
+        total_stages (int): Total number of diffusion stages.
+        mask_token_id (int): The token ID used to mask hidden positions in visible_harmony.
+        device (str or torch.device): Target device.
+
+    Returns:
+        visible_harmony (torch.Tensor): Tensor of shape (B, L) with visible tokens (others masked).
+        denoising_target (torch.Tensor): Tensor of shape (B, L) with tokens to predict (others = -100).
+    """
+    device = harmony_tokens.device
+    B, L = harmony_tokens.shape
+    percent_visible = stage / total_stages
+    percent_predict = 1 / total_stages
+
+    visible_harmony = torch.full_like(harmony_tokens, fill_value=mask_token_id)
+    denoising_target = torch.full_like(harmony_tokens, fill_value=-100)  # -100 is ignored by CrossEntropyLoss
+
+    for b in range(B):
+        perm = torch.randperm(L, device=device)
+        num_visible = int(L * percent_visible)
+        num_predict = int(L * percent_predict + 0.5)
+
+        visible_idx = perm[:num_visible]
+        predict_idx = perm[:num_visible + num_predict]  # predict includes visible + next unmasked tokens
+
+        visible_harmony[b, visible_idx] = harmony_tokens[b, visible_idx]
+        denoising_target[b, predict_idx] = harmony_tokens[b, predict_idx]
+
+    return visible_harmony, denoising_target
+# end random_progressive_masking
+
+def structured_progressive_masking(harmony_tokens, time_sigs, stage, total_stages, mask_token_id):
+    B, _ = harmony_tokens.shape
+    device = harmony_tokens.device
+    visible_harmony = torch.full_like( harmony_tokens, mask_token_id )
+    denoising_target = harmony_tokens.clone()
+    input_unmask = torch.full_like( harmony_tokens, 0, dtype=torch.bool, device=device )
+    target_to_learn = torch.full_like(
+        harmony_tokens,
+        False,
+        dtype=torch.bool,
+        device=device
+    )
+    for i in range(B):
+        # get ts num and den
+        ts_num = torch.nonzero(time_sigs[i, :14])[0] + 2
+        ts_den = torch.nonzero(time_sigs[i, 14:])[0]*8 - 4
+        spacing_target = min(128, max(1, int((2**(7*(1-(stage+1)/total_stages)))*(ts_num/ts_den))))
+
+        # Get the indices that will remain unmasked for this step
+        target_to_learn[i, ::spacing_target] = True  # reveal tokens at spacing in target
+        spacing_input = 2*spacing_target #max(2, int((2**(8*(1-stage/total_stages)))*(ts_num/ts_den)))
+        input_unmask[i, ::spacing_input] = True  # reveal tokens at spacing in harmony input
+    visible_harmony[input_unmask] = harmony_tokens[input_unmask]
+    target_to_learn[input_unmask] = False
+    denoising_target[~torch.logical_or( target_to_learn , input_unmask )] = -100  # ignore tokens that were not shown to the model
+    return visible_harmony, denoising_target
+# end structured_progressive_masking
+
+def apply_masking(harmony_tokens,
+    mask_token_id,
+    stage,
+    time_sigs,
+    total_stages=10,
+    curriculum_type='random'):
+    if curriculum_type == 'random':
+        return random_progressive_masking(harmony_tokens, stage, total_stages, mask_token_id)
+    elif curriculum_type == 'ts_incr':
+        return structured_progressive_masking(harmony_tokens, time_sigs, stage, total_stages, mask_token_id)
+# end apply_masking
+
 def apply_structured_masking(harmony_tokens,
     mask_token_id,
     stage,
     time_sigs,
+    total_stages=10,
     curriculum_type='no'):
     """
     harmony_tokens: (B, time_step) - original ground truth tokens
@@ -53,7 +131,7 @@ def apply_structured_masking(harmony_tokens,
         dtype=torch.bool,
         device=device
     )
-    if curriculum_type == 'ts_incr' and stage > 0:
+    if curriculum_type == 'ts_incr':
         # some tokens need to be revealed in the input for incremental learning
         input_unmask = torch.full_like( harmony_tokens, 0, dtype=torch.bool, device=device )
 
@@ -62,25 +140,22 @@ def apply_structured_masking(harmony_tokens,
             # get ts num and den
             ts_num = torch.nonzero(time_sigs[i, :14])[0] + 2
             ts_den = torch.nonzero(time_sigs[i, 14:])[0]*8 - 4
-            spacing_schedule = [ 16*ts_num//(ts_den//4), 8*ts_num//(ts_den//4), 4*ts_num//(ts_den//4) , 2*ts_num//(ts_den//4) , 1*ts_num//(ts_den//4) ]
-            spacing = spacing_schedule[stage] if stage < len(spacing_schedule) else 1
+            spacing_target = min(128, max(1, int((2**(7*stage/total_stages))*(ts_num/ts_den))))
 
             # Get the indices that will remain unmasked for this step
-            target_to_learn[i, ::spacing] = True  # reveal tokens at spacing in target
-            if curriculum_type == 'ts_incr' and stage > 0:
-                spacing = spacing_schedule[stage-1] if stage-1 < len(spacing_schedule) else spacing_schedule[-1]
-                input_unmask[i, ::spacing] = True  # reveal tokens at spacing in harmony input
+            target_to_learn[i, ::spacing_target] = True  # reveal tokens at spacing in target
+            if curriculum_type == 'ts_incr':
+                spacing_input = max(2, int((2**(8*stage/total_stages))*(ts_num/ts_den)))
+                input_unmask[i, ::spacing_input] = True  # reveal tokens at spacing in harmony input
     if curriculum_type == 'random':
-        step_ratios = {0: 0.8, 1: 0.6, 2: 0.4, 3: 0.2, 4: 0 }
         for i in range(B):
-            if stage < len(step_ratios):
-                step_ratio = step_ratios[stage]
-                valid_indices = (harmony_tokens[i] != -1).nonzero(as_tuple=False).squeeze()
-                n_reveal = max(1, int(len(valid_indices) * step_ratio))
-                reveal_indices = random.sample(valid_indices.tolist(), n_reveal)
-                masked_harmony[i, reveal_indices] = harmony_tokens[i, reveal_indices]
+            stage_ratio = 1. - (stage+1)/total_stages
+            valid_indices = (harmony_tokens[i] != -1).nonzero(as_tuple=False).squeeze()
+            n_reveal = int(len(valid_indices) * stage_ratio)
+            reveal_indices = random.sample(valid_indices.tolist(), n_reveal)
+            masked_harmony[i, reveal_indices] = harmony_tokens[i, reveal_indices]
             target_to_learn = masked_harmony == mask_token_id
-    if curriculum_type == 'ts_incr' and stage > 0:
+    if curriculum_type == 'ts_incr':
         masked_harmony[input_unmask] = harmony_tokens[input_unmask]
         target_to_learn[input_unmask] = False
         target[~torch.logical_or( target_to_learn , input_unmask )] = -100  # ignore tokens that were not shown to the model
