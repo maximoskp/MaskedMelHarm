@@ -16,7 +16,6 @@ class GridMLMMelHarm(nn.Module):
                  device='cpu'):
         super().__init__()
         self.device = device
-        self.to(device)
         self.d_model = d_model
         self.seq_len = 1 + grid_length + grid_length # condition + melody + harmony
         self.grid_length = grid_length
@@ -27,7 +26,7 @@ class GridMLMMelHarm(nn.Module):
         # Harmony token embedding: V -> d_model
         self.harmony_embedding = nn.Embedding(chord_vocab_size, d_model, device=self.device)
         # Positional encoding
-        self.pos_embedding = nn.Parameter(torch.randn(1, self.seq_len, d_model)).to(self.device)
+        self.pos_embedding = nn.Parameter(torch.randn(1, self.seq_len, d_model))
         # Dropout
         self.dropout = nn.Dropout(dropout)
         # embedding for curriculum stage
@@ -43,16 +42,16 @@ class GridMLMMelHarm(nn.Module):
                                                    dim_feedforward=dim_feedforward,
                                                    dropout=dropout,
                                                    activation='gelu',
-                                                   batch_first=True).to(self.device)
+                                                   batch_first=True)
         self.encoder = nn.TransformerEncoder(
                         encoder_layer,
-                        num_layers=num_layers).to(self.device)
-
+                        num_layers=num_layers)
         # Optional: output head for harmonies
         self.output_head = nn.Linear(d_model, chord_vocab_size, device=self.device)
         # Layer norm at input and output
         self.input_norm = nn.LayerNorm(d_model)
         self.output_norm = nn.LayerNorm(d_model)
+        self.to(device)
     # end init
 
     def forward(self, conditioning_vec, melody_grid, harmony_tokens=None, stage_idx=None):
