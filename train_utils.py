@@ -16,7 +16,7 @@ from transformers import get_cosine_schedule_with_warmup
 
 perplexity_metric = Perplexity(ignore_index=-100)
 
-def random_progressive_masking(harmony_tokens, stage, total_stages, mask_token_id):
+def random_progressive_masking(harmony_tokens, total_stages, mask_token_id, stage_in=None):
     """
     Generate visible input and denoising target for diffusion-style training.
 
@@ -33,13 +33,16 @@ def random_progressive_masking(harmony_tokens, stage, total_stages, mask_token_i
     """
     device = harmony_tokens.device
     B, L = harmony_tokens.shape
-    percent_visible = stage / total_stages
-    percent_predict = 1 / total_stages
 
     visible_harmony = torch.full_like(harmony_tokens, fill_value=mask_token_id)
     denoising_target = torch.full_like(harmony_tokens, fill_value=-100)  # -100 is ignored by CrossEntropyLoss
-
+    
+    stage_indices = torch.randint(0, total_stages, (B,), device=device)
     for b in range(B):
+        stage = stage_indices[b] if stage_in is None else stage_in
+
+        percent_visible = stage / total_stages
+        percent_predict = 1 / total_stages
         perm = torch.randperm(L, device=device)
         num_visible = int(L * percent_visible)
         num_predict = int(L * percent_predict + 0.5)
@@ -50,11 +53,11 @@ def random_progressive_masking(harmony_tokens, stage, total_stages, mask_token_i
         visible_harmony[b, visible_idx] = harmony_tokens[b, visible_idx]
         denoising_target[b, predict_idx] = harmony_tokens[b, predict_idx]
 
-    return visible_harmony, denoising_target
+    return visible_harmony, denoising_target, stage_indices
 # end random_progressive_masking
 
-def structured_progressive_masking(harmony_tokens, time_sigs, stage, total_stages, mask_token_id):
-    B, _ = harmony_tokens.shape
+def structured_progressive_masking(harmony_tokens, total_stages, mask_token_id, stage_in=None):
+    B, L = harmony_tokens.shape
     device = harmony_tokens.device
     visible_harmony = torch.full_like( harmony_tokens, mask_token_id )
     denoising_target = harmony_tokens.clone()
@@ -65,32 +68,30 @@ def structured_progressive_masking(harmony_tokens, time_sigs, stage, total_stage
         dtype=torch.bool,
         device=device
     )
+    stage_indices = torch.randint(0, total_stages, (B,), device=device)
     for i in range(B):
-        # get ts num and den
-        ts_num = torch.nonzero(time_sigs[i, :14])[0] + 2
-        ts_den = torch.nonzero(time_sigs[i, 14:])[0]*8 - 4
-        spacing_target = min(128, max(1, int((2**(7*(1-(stage+1)/total_stages)))*(ts_num/ts_den))))
+        stage = stage_indices[i] if stage_in is None else stage_in
 
+        spacing_target = min( L, max(1, int((2**(8-stage)))) )
         # Get the indices that will remain unmasked for this step
         target_to_learn[i, ::spacing_target] = True  # reveal tokens at spacing in target
         spacing_input = 2*spacing_target #max(2, int((2**(8*(1-stage/total_stages)))*(ts_num/ts_den)))
-        input_unmask[i, ::spacing_input] = True  # reveal tokens at spacing in harmony input
+        input_unmask[i, ::spacing_input] = spacing_input <= L  # reveal tokens at spacing in harmony input
     visible_harmony[input_unmask] = harmony_tokens[input_unmask]
     target_to_learn[input_unmask] = False
     denoising_target[~torch.logical_or( target_to_learn , input_unmask )] = -100  # ignore tokens that were not shown to the model
-    return visible_harmony, denoising_target
+    return visible_harmony, denoising_target, stage_indices
 # end structured_progressive_masking
 
 def apply_masking(harmony_tokens,
     mask_token_id,
-    stage,
-    time_sigs,
     total_stages=10,
-    curriculum_type='random'):
+    curriculum_type='random',
+    stage=None):
     if curriculum_type == 'random':
-        return random_progressive_masking(harmony_tokens, stage, total_stages, mask_token_id)
-    elif curriculum_type == 'ts_incr':
-        return structured_progressive_masking(harmony_tokens, time_sigs, stage, total_stages, mask_token_id)
+        return random_progressive_masking(harmony_tokens, total_stages, mask_token_id, stage)
+    elif curriculum_type == 'base2':
+        return structured_progressive_masking(harmony_tokens, total_stages, mask_token_id, stage)
 # end apply_masking
 
 def apply_structured_masking(harmony_tokens,
@@ -186,7 +187,7 @@ def get_stage_uniform(epoch, max_epoch, max_stage):
 # end get_stage_uniform
 
 def validation_loop(model, valloader, mask_token_id, loss_fn, epoch, step, \
-                    curriculum_type, stage, stage_aware, train_loss, train_accuracy, \
+                    curriculum_type, train_loss, train_accuracy, \
                     train_perplexity, train_token_entropy,
                     best_val_loss, saving_version, results_path=None, transformer_path=None):
     device = model.device
@@ -203,7 +204,7 @@ def validation_loop(model, valloader, mask_token_id, loss_fn, epoch, step, \
         val_token_entropy = 0
         print('validation')
         with tqdm(valloader, unit='batch') as tepoch:
-            tepoch.set_description(f'Epoch {epoch}/{step} (stg {stage}) | val')
+            tepoch.set_description(f'Epoch {epoch}/{step}| val')
             for batch in tepoch:
                 perplexity_metric.reset()
                 melody_grid = batch["pianoroll"].to(device)           # (B, 256, 140)
@@ -211,12 +212,11 @@ def validation_loop(model, valloader, mask_token_id, loss_fn, epoch, step, \
                 conditioning_vec = batch["time_signature"].to(device)  # (B, C0)
                 
                 # Apply masking to harmony
-                harmony_input, harmony_target = apply_structured_masking(
+                harmony_input, harmony_target, stage_indices = apply_masking(
                     harmony_gt,
                     mask_token_id,
-                    stage,
-                    conditioning_vec,
-                    curriculum_type
+                    total_stages=10,
+                    curriculum_type=curriculum_type
                 )
 
                 # Forward pass
@@ -224,7 +224,7 @@ def validation_loop(model, valloader, mask_token_id, loss_fn, epoch, step, \
                     conditioning_vec,
                     melody_grid,
                     harmony_input,
-                    None if not stage_aware else stage
+                    stage_indices
                 )
 
                 # Compute loss only on masked tokens
@@ -261,7 +261,7 @@ def validation_loop(model, valloader, mask_token_id, loss_fn, epoch, step, \
     if results_path is not None:
         with open( results_path, 'a' ) as f:
             writer = csv.writer(f)
-            writer.writerow( [epoch, step, stage, train_loss, train_accuracy, \
+            writer.writerow( [epoch, step, train_loss, train_accuracy, \
                             train_perplexity, train_token_entropy, \
                             val_loss, val_accuracy, \
                             val_perplexity, val_token_entropy, \
@@ -272,23 +272,19 @@ def validation_loop(model, valloader, mask_token_id, loss_fn, epoch, step, \
 def train_with_curriculum(
     model, optimizer, trainloader, valloader, loss_fn, mask_token_id,
     epochs=100,
-    curriculum_type='no',  # 'no', 'random', 'ts_blank', 'ts_incr'
-    curriculum_progression='uniform', # 'linear', 'mixed', 'uniform'
-    epochs_per_stage=10,
+    curriculum_type='random',  # 'random', 'base2'
     results_path=None,
     transformer_path=None,
-    stage_aware=True
 ):
     device = next(model.parameters()).device
     perplexity_metric.to(device)
-    max_stage = 5
     best_val_loss = np.inf
     saving_version = 0
 
     # save results and model
     print('results_path:', results_path)
     if results_path is not None:
-        result_fields = ['epoch', 'step', 'stage', 'train_loss', 'train_acc', \
+        result_fields = ['epoch', 'step', 'train_loss', 'train_acc', \
                         'train_ppl', 'train_te', 'val_loss', \
                         'val_acc', 'val_ppl', 'val_te', 'sav_version']
         with open( results_path, 'w' ) as f:
@@ -312,19 +308,9 @@ def train_with_curriculum(
         train_perplexity = 0
         running_token_entropy = 0
         train_token_entropy = 0
-
-        # Determine masking level
-        if curriculum_progression == "linear":
-            stage = get_stage_linear(epoch, epochs_per_stage, max_stage)
-        elif curriculum_progression == "mixed":
-            stage = get_stage_mixed(epoch, epochs, max_stage)
-        elif curriculum_progression == "uniform":
-            stage = get_stage_uniform(epoch, epochs_per_stage, max_stage)
-        else:
-            raise ValueError("Invalid curriculum_progressions")
-
+        
         with tqdm(trainloader, unit='batch') as tepoch:
-            tepoch.set_description(f'Epoch {epoch}/{step} (stg {stage}) | trn')
+            tepoch.set_description(f'Epoch {epoch}/{step} | trn')
             for batch in tepoch:
                 perplexity_metric.reset()
                 model.train()
@@ -333,12 +319,11 @@ def train_with_curriculum(
                 conditioning_vec = batch["time_signature"].to(device)  # (B, C0)
                 
                 # Apply masking to harmony
-                harmony_input, harmony_target = apply_structured_masking(
+                harmony_input, harmony_target, stage_indices = apply_masking(
                     harmony_gt,
                     mask_token_id,
-                    stage,
-                    conditioning_vec,
-                    curriculum_type
+                    total_stages=10,
+                    curriculum_type=curriculum_type
                 )
 
                 # Forward pass
@@ -346,7 +331,7 @@ def train_with_curriculum(
                     conditioning_vec.to(device),
                     melody_grid.to(device),
                     harmony_input.to(device),
-                    None if not stage_aware else stage
+                    stage_indices
                 )
 
                 # Compute loss only on masked tokens
@@ -376,7 +361,7 @@ def train_with_curriculum(
 
                 tepoch.set_postfix(loss=train_loss, accuracy=train_accuracy)
                 step += 1
-                if step%(total_steps//100) == 0 or step == total_steps:
+                if step%(total_steps//1000) == 0 or step == total_steps:
                     best_val_loss, saving_version = validation_loop(
                         model,
                         valloader,
@@ -385,8 +370,6 @@ def train_with_curriculum(
                         epoch,
                         step,
                         curriculum_type,
-                        stage,
-                        stage_aware,
                         train_loss,
                         train_accuracy,
                         train_perplexity,
@@ -396,15 +379,6 @@ def train_with_curriculum(
                         results_path=results_path,
                         transformer_path=transformer_path
                     )
-                    # Redetermine masking level after validation loop
-                    if curriculum_progression == "linear":
-                        stage = get_stage_linear(epoch, epochs_per_stage, max_stage)
-                    elif curriculum_progression == "mixed":
-                        stage = get_stage_mixed(epoch, epochs, max_stage)
-                    elif curriculum_progression == "uniform":
-                        stage = get_stage_uniform(epoch, epochs_per_stage, max_stage)
-                    else:
-                        raise ValueError("Invalid curriculum_progressions")
             # end for batch
         # end with tqdm
     # end for epoch

@@ -10,26 +10,8 @@
 # )
 
 scripts=(
-    # "train_gmlm.py -c no -s 2 -p mixed -a 0 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 0 -e 15 -l 1e-4 -b 8"
-    # "train_gmlm.py -c random -s 2 -p mixed -a 0 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 0 -e 15 -l 1e-4 -b 8"
-    # "train_gmlm.py -c ts_blank -s 2 -p mixed -a 0 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 0 -e 15 -l 1e-4 -b 8"
-    # "train_gmlm.py -c ts_incr -s 2 -p mixed -a 0 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 0 -e 15 -l 1e-4 -b 8"
-    # "train_gmlm.py -c random -s 2 -p mixed -a 1 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 1 -e 15 -l 1e-4 -b 8"
-    # "train_gmlm.py -c ts_blank -s 2 -p mixed -a 1 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 1 -e 15 -l 1e-4 -b 8"
-    # "train_gmlm.py -c ts_incr -s 2 -p mixed -a 1 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 1 -e 15 -l 1e-4 -b 8"
-    # "train_gmlm.py -c random -s 2 -p linear -a 0 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 1 -e 15 -l 1e-4 -b 8"
-    # "train_gmlm.py -c ts_blank -s 2 -p linear -a 0 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 2 -e 15 -l 1e-4 -b 8"
-    # "train_gmlm.py -c ts_incr -s 2 -p linear -a 0 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 2 -e 15 -l 1e-4 -b 8"
-    # "train_gmlm.py -c random -s 2 -p linear -a 1 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 2 -e 15 -l 1e-4 -b 8"
-    # "train_gmlm.py -c ts_blank -s 2 -p linear -a 1 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 2 -e 15 -l 1e-4 -b 8"
-    # "train_gmlm.py -c ts_incr -s 2 -p linear -a 1 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 1 -e 15 -l 1e-4 -b 8"
-    "train_gmlm.py -c no -s 2 -p uniform -a 0 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 0 -e 15 -l 1e-4 -b 8"
-    "train_gmlm.py -c random -s 2 -p uniform -a 0 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 0 -e 15 -l 1e-4 -b 8"
-    "train_gmlm.py -c ts_blank -s 2 -p uniform -a 0 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 0 -e 15 -l 1e-4 -b 8"
-    "train_gmlm.py -c ts_incr -s 2 -p uniform -a 0 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 0 -e 15 -l 1e-4 -b 8"
-    "train_gmlm.py -c random -s 2 -p uniform -a 1 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 1 -e 15 -l 1e-4 -b 8"
-    "train_gmlm.py -c ts_blank -s 2 -p uniform -a 1 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 1 -e 15 -l 1e-4 -b 8"
-    "train_gmlm.py -c ts_incr -s 2 -p uniform -a 1 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 1 -e 15 -l 1e-4 -b 8"
+    "train_gmlm.py -c random -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 0 -e 15 -l 1e-4 -b 32"
+    "train_gmlm.py -c base2 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 1 -e 15 -l 1e-4 -b 32"
 )
 
 # Name of the conda environment

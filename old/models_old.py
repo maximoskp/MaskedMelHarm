@@ -12,7 +12,7 @@ class GridMLMMelHarm(nn.Module):
                  pianoroll_dim=100,
                  grid_length=256,
                  dropout=0.3,
-                 max_stages=10,
+                 max_stages=6,
                  device='cpu'):
         super().__init__()
         self.device = device
@@ -54,7 +54,7 @@ class GridMLMMelHarm(nn.Module):
         self.to(device)
     # end init
 
-    def forward(self, conditioning_vec, melody_grid, harmony_tokens=None, stage_indices=None):
+    def forward(self, conditioning_vec, melody_grid, harmony_tokens=None, stage_idx=None):
         """
         conditioning_vec: (B, C)
         melody_grid: (B, grid_length, pianoroll_dim)
@@ -80,8 +80,9 @@ class GridMLMMelHarm(nn.Module):
 
         # Add positional encoding
         full_seq = full_seq + self.pos_embedding[:, :self.seq_len, :]
-        if stage_indices is not None:
-            stage_emb = self.stage_embedding(stage_indices)  # (B, stage_embedding_dim)
+        if stage_idx is not None and isinstance(stage_idx, int):
+            stage_idx = torch.full((B,), stage_idx, dtype=torch.long, device=self.device)
+            stage_emb = self.stage_embedding(stage_idx)  # (B, stage_embedding_dim)
             stage_emb = stage_emb.unsqueeze(1).repeat(1, self.seq_len, 1)  # (B, seq_len, stage_embedding_dim)
             # Concatenate along the feature dimension
             full_seq = torch.cat([full_seq, stage_emb], dim=-1)  # (B, seq_len, d_model + stage_embedding_dim)
