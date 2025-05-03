@@ -429,7 +429,10 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
             'input_ids': chord_token_ids,
             'pianoroll': full_pianoroll,
             'time_signature': ts_num_list + ts_den_list,
-            'attention_mask': attention_mask
+            'attention_mask': attention_mask,
+            'skip_steps': skip_steps,
+            'melody_part':melody_part,
+            'ql_per_quantum': ql_per_quantum
         }
     # end encode
 
