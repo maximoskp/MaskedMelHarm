@@ -49,7 +49,7 @@ def random_progressive_generate(
             # Sample `topk` indices from masked positions with probability proportional to confidence
             masked_confidences = confidences[0, masked_positions]
             p = masked_confidences / masked_confidences.sum()
-            selected_positions = masked_positions[torch.multinomial(p, topk, replacement=False)]
+            selected_positions = masked_positions[torch.multinomial(p, topk, replacement=False).to(device)]
         else:
             raise ValueError(f"Unsupported strategy: {strategy}")
 
@@ -171,6 +171,7 @@ def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_s
     # Repeat previous chord at start of bars with no chord
     for m in chords_with_measures.getElementsByClass(stream.Measure):
         bar_offset = m.offset
+        bar_duration = m.barDuration.quarterLength
         # has_chord = any(isinstance(el, chord.Chord) and el.offset == bar_offset for el in m)
         # has_chord = any( isinstance(el, chord.Chord) for el in m )
         has_chord = any(isinstance(el, chord.Chord) and el.offset == 0. for el in m)
@@ -181,6 +182,13 @@ def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_s
             if prev_chords:
                 prev_chord = prev_chords[-1]
                 m.insert(0.0, deepcopy(prev_chord))
+        else:
+            # modify duration so that it doesn't affect the next bar
+            for el in m.notes:
+                if isinstance(el, chord.Chord):
+                    max_duration = bar_duration - el.offset
+                    if el.quarterLength > max_duration:
+                        el.quarterLength = max_duration
 
     # Create final score with chords and melody
     score = stream.Score()

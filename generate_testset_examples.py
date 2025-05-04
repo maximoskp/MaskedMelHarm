@@ -16,7 +16,7 @@ os.makedirs('MIDIs', exist_ok=True)
 os.makedirs(mxl_folder, exist_ok=True)
 os.makedirs(midi_folder, exist_ok=True)
 # how many files to generate
-num_files = 10
+num_files = 1000
 
 val_dir = '/media/maindisk/maximos/data/hooktheory_all12_test'
 tokenizer = CSGridMLMTokenizer(fixed_length=256)
@@ -34,15 +34,16 @@ print('total data_files:', len(data_files))
 
 # get random indeces from 0 to len(data_files)-1
 random_indices = np.random.permutation(len(data_files))[:num_files]
+# random_indices = [1473]
 
 # load models
 random_model = load_model(curriculum_type='random', device_name='cuda:0', tokenizer=tokenizer)
 base2_model = load_model(curriculum_type='base2', device_name='cuda:1', tokenizer=tokenizer)
 
 for i,idx in enumerate(random_indices):
-    print(f'{i+1}/{num_files} : {idx}{data_files[i].replace(val_dir,'').replace('/','_')}')
+    print(f'{i+1}/{num_files} : {idx}{data_files[idx].replace(val_dir,'').replace('/','_')}')
     # base name to save generated file
-    save_name_base = f'{data_files[i].replace(val_dir,'').replace('/','_')}'
+    save_name_base = f'{data_files[idx].replace(val_dir,'').replace('/','_')}'
     # get encoded data from tokenizer
     encoded = tokenizer.encode(data_files[idx])
     melody_grid = torch.stack([torch.tensor(encoded['pianoroll'], dtype=torch.float)])
@@ -55,7 +56,7 @@ for i,idx in enumerate(random_indices):
         conditioning_vec=conditioning_vec,
         num_stages=10,
         mask_token_id=tokenizer.mask_token_id,
-        temperature=1.0,
+        temperature=2.0,
         strategy='topk'
     )
     random_output_tokens = []
@@ -68,7 +69,7 @@ for i,idx in enumerate(random_indices):
         conditioning_vec=conditioning_vec,
         num_stages=10,
         mask_token_id=tokenizer.mask_token_id,
-        temperature=1.0,
+        temperature=2.0,
         strategy='topk'
     )
     base2_output_tokens = []
