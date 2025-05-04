@@ -1,5 +1,9 @@
 saved_models/
 figs/
+MIDIs/
+musicXMLs/
+
+*.zip
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

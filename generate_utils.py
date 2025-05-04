@@ -1,8 +1,11 @@
 import torch
 import torch.nn.functional as F
 from train_utils import apply_structured_masking
-
-import torch
+from music21 import harmony, stream, metadata, chord, meter
+import mir_eval
+import numpy as np
+from copy import deepcopy
+from models import GridMLMMelHarm
 
 def random_progressive_generate(
     model,
@@ -41,7 +44,7 @@ def random_progressive_generate(
         if strategy == 'topk':
             masked_confidences = confidences[0, masked_positions]
             topk_indices = torch.topk(masked_confidences, k=topk).indices
-            selected_positions = masked_positions[topk_indices]
+            selected_positions = masked_positions[topk_indices.to(device)]
         elif strategy == 'sample':
             # Sample `topk` indices from masked positions with probability proportional to confidence
             masked_confidences = confidences[0, masked_positions]
@@ -108,58 +111,110 @@ def structured_progressive_generate(
     return visible_harmony
 # end structured_progressive_generate
 
+def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_steps):
+    # create a part for chords in midi format
+    chords_part = stream.Part()
+    # Create deep copy of flat melody part
+    harmonized_part = deepcopy(melody_part)
+    
+    # Remove old chord symbols
+    for el in harmonized_part.recurse().getElementsByClass(harmony.ChordSymbol):
+        harmonized_part.remove(el)
 
-def ts_iterative_unmasking(
-        model,
-        conditioning_vec,
-        melody_grid,
-        stage_aware,
-        mask_token_id,
-        num_stages=6
-    ):
-    device = model.device
-    output_tokens = torch.full([1,256], 1).to(device)
-    fake_gt_tokens = torch.full([1,256], 1).to(device)
+    # Track inserted chords
+    last_chord_symbol = None
+    inserted_chords = {}
 
-    # Start with all masked tokens
-    output_tokens[:] = mask_token_id
+    for i, mir_chord in enumerate(generated_chords):
+        if mir_chord in ("<pad>", "<nc>"):
+            continue
+        if mir_chord == last_chord_symbol:
+            continue
 
-    for stage in range(num_stages):
-        model.eval()
-        # Apply masking to harmony
-        _, harmony_target = apply_structured_masking(
-            fake_gt_tokens,
-            mask_token_id,
-            stage,
-            conditioning_vec,
-            'ts_blank'
-        )
-        with torch.no_grad():
-            logits = model(
-                conditioning_vec.to(device),
-                melody_grid.to(device),
-                output_tokens.to(device),
-                None if not stage_aware else stage
-            )
-            probs = F.softmax(logits, dim=-1)
+        offset = (i + skip_steps) * ql_per_16th
 
-        # Sample or argmax predictions
-        sampled_tokens = torch.argmax(probs, dim=-1)
+        # Decode mir_eval chord symbol to chord symbol object
+        try:
+            r, t, _ = mir_eval.chord.encode(mir_chord, reduce_extended_chords=True)
+            pcs = r + np.where(t > 0)[0] + 48
+            c = chord.Chord(pcs.tolist())
+            chord_symbol = harmony.chordSymbolFromChord(c)
+        except Exception as e:
+            print(f"Skipping invalid chord {mir_chord} at step {i}: {e}")
+            continue
 
-        output_tokens[ harmony_target != -100 ] = sampled_tokens[ harmony_target != -100 ]
-    return output_tokens
-# end mask_predict
+        # harmonized_part.insert(offset, chord_symbol)
+        chords_part.insert(offset, c)
+        inserted_chords[i] = chord_symbol
+        last_chord_symbol = mir_chord
 
-def one_shot_generate(model, seq_length, mask_token_id):
-    batch_size = 1  # or more if you want
-    device = next(model.parameters()).device
+    # Convert flat part to one with measures
+    harmonized_with_measures = harmonized_part.makeMeasures()
 
-    input_tokens = torch.full((batch_size, seq_length), mask_token_id, device=device)
+    # Repeat previous chord at start of bars with no chord
+    for m in harmonized_with_measures.getElementsByClass(stream.Measure):
+        bar_offset = m.offset
+        # has_chord = any(isinstance(el, harmony.ChordSymbol) and el.offset == bar_offset for el in m)
+        # has_chord = any( isinstance(el, harmony.ChordSymbol) for el in m )
+        has_chord = any(isinstance(el, harmony.ChordSymbol) and el.offset == 0. for el in m)
+        if not has_chord:
+            # Find previous chord before this measure
+            prev_chords = [el for el in harmonized_part.recurse().getElementsByClass(harmony.ChordSymbol)
+                           if el.offset < bar_offset]
+            if prev_chords:
+                prev_chord = prev_chords[-1]
+                m.insert(0.0, deepcopy(prev_chord))
+    
+    # Convert flat part to one with measures
+    chords_with_measures = chords_part.makeMeasures()
 
+    # Repeat previous chord at start of bars with no chord
+    for m in chords_with_measures.getElementsByClass(stream.Measure):
+        bar_offset = m.offset
+        # has_chord = any(isinstance(el, chord.Chord) and el.offset == bar_offset for el in m)
+        # has_chord = any( isinstance(el, chord.Chord) for el in m )
+        has_chord = any(isinstance(el, chord.Chord) and el.offset == 0. for el in m)
+        if not has_chord:
+            # Find previous chord before this measure
+            prev_chords = [el for el in chords_part.recurse().getElementsByClass(chord.Chord)
+                           if el.offset < bar_offset]
+            if prev_chords:
+                prev_chord = prev_chords[-1]
+                m.insert(0.0, deepcopy(prev_chord))
+
+    # Create final score with chords and melody
+    score = stream.Score()
+    score.insert(0, harmonized_with_measures)
+    score.insert(0, chords_with_measures)
+
+    return score
+# end overlay_generated_harmony
+
+def save_harmonized_score(score, title="Harmonized Piece", out_path="harmonized.xml"):
+    score.metadata = metadata.Metadata()
+    score.metadata.title = title
+    score.write('musicxml', fp=out_path)
+# end save_harmonized_score
+
+def load_model(curriculum_type = 'random', device_name = 'cuda:0', tokenizer=None):
+    curriculum_type = 'random'
+    device_name = 'cuda:1'
+    if device_name == 'cpu':
+        device = torch.device('cpu')
+    else:
+        if torch.cuda.is_available():
+            device = torch.device(device_name)
+        else:
+            print('Selected device not available: ' + device_name)
+    model = GridMLMMelHarm(
+        chord_vocab_size=len(tokenizer.vocab),
+        device=device
+    )
+    model_path = 'saved_models/' + curriculum_type +  '.pt'
+    # checkpoint = torch.load(model_path, map_location=device_name, weights_only=True)
+    checkpoint = torch.load(model_path, map_location=device_name)
+    model.load_state_dict(checkpoint)
     model.eval()
-    with torch.no_grad():
-        logits = model(input_tokens)
-        output_tokens = torch.argmax(logits, dim=-1)
-
-    return output_tokens
-# end one_shot_generate
+    model.to(device)
+    return model
+# end load_model
