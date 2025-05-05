@@ -23,6 +23,8 @@ tokenizer = CSGridMLMTokenizer(fixed_length=256)
 val_dataset = CSGridMLMDataset(val_dir, tokenizer, 512)
 
 mask_token_id = tokenizer.mask_token_id
+pad_token_id = tokenizer.pad_token_id
+nc_token_id = tokenizer.nc_token_id
 
 data_files = []
 for dirpath, _, filenames in os.walk(val_dir):
@@ -56,8 +58,11 @@ for i,idx in enumerate(random_indices):
         conditioning_vec=conditioning_vec,
         num_stages=10,
         mask_token_id=tokenizer.mask_token_id,
-        temperature=2.0,
-        strategy='topk'
+        temperature=1.0,
+        strategy='sample',
+        pad_token_id=pad_token_id,      # token ID for <pad>
+        nc_token_id=nc_token_id,       # token ID for <nc>
+        force_fill=True         # disallow <pad>/<nc> before melody ends
     )
     random_output_tokens = []
     for t in random_generated_harmony[0].tolist():
@@ -69,8 +74,11 @@ for i,idx in enumerate(random_indices):
         conditioning_vec=conditioning_vec,
         num_stages=10,
         mask_token_id=tokenizer.mask_token_id,
-        temperature=2.0,
-        strategy='topk'
+        temperature=1.0,
+        strategy='sample',
+        pad_token_id=pad_token_id,      # token ID for <pad>
+        nc_token_id=nc_token_id,       # token ID for <nc>
+        force_fill=True         # disallow <pad>/<nc> before melody ends
     )
     base2_output_tokens = []
     for t in base2_generated_harmony[0].tolist():
