@@ -12,16 +12,16 @@ import baseline_models as bm
 generate_baseline = True
 
 # output folders
-mxl_folder = 'musicXMLs/testset/'
-midi_folder = 'MIDIs/testset/'
+mxl_folder = 'musicXMLs/jazz/'
+midi_folder = 'MIDIs/jazz/'
 os.makedirs('musicXMLs', exist_ok=True)
 os.makedirs('MIDIs', exist_ok=True)
 os.makedirs(mxl_folder, exist_ok=True)
 os.makedirs(midi_folder, exist_ok=True)
 # how many files to generate
-num_files = 3
+num_files = 1000
 
-val_dir = '/media/maindisk/maximos/data/hooktheory_all12_test'
+val_dir = '/media/maindisk/maximos/data/gjt_melodies/Library_melodies/'
 tokenizer = CSGridMLMTokenizer(fixed_length=256)
 val_dataset = CSGridMLMDataset(val_dir, tokenizer, 512)
 
@@ -99,8 +99,8 @@ for i,idx in enumerate(random_indices):
         encoded['ql_per_quantum'],
         encoded['skip_steps']
     )
-    mxl_file_name = mxl_folder + f'{idx}_random' + save_name_base + '.mxl'
-    midi_file_name = midi_folder + f'{idx}_random' + save_name_base + '.mid'
+    mxl_file_name = mxl_folder + f'{idx}_random_' + save_name_base + '.mxl'
+    midi_file_name = midi_folder + f'{idx}_random_' + save_name_base + '.mid'
     print(f'{i+1}/{num_files} : saving mxl')
     save_harmonized_score(score, out_path=mxl_file_name)
     print(f'{i+1}/{num_files} : saving midi')
@@ -113,8 +113,8 @@ for i,idx in enumerate(random_indices):
         encoded['ql_per_quantum'],
         encoded['skip_steps']
     )
-    mxl_file_name = mxl_folder + f'{idx}_base2' + save_name_base + '.mxl'
-    midi_file_name = midi_folder + f'{idx}_base2' + save_name_base + '.mid'
+    mxl_file_name = mxl_folder + f'{idx}_base2_' + save_name_base + '.mxl'
+    midi_file_name = midi_folder + f'{idx}_base2_' + save_name_base + '.mid'
     print(f'{i+1}/{num_files} : saving mxl')
     save_harmonized_score(score, out_path=mxl_file_name)
     print(f'{i+1}/{num_files} : saving midi')
@@ -127,23 +127,23 @@ for i,idx in enumerate(random_indices):
         encoded['ql_per_quantum'],
         encoded['skip_steps']
     )
-    mxl_file_name = mxl_folder + f'{idx}_real' + save_name_base + '.mxl'
-    midi_file_name = midi_folder + f'{idx}_real' + save_name_base + '.mid'
+    mxl_file_name = mxl_folder + f'{idx}_real_' + save_name_base + '.mxl'
+    midi_file_name = midi_folder + f'{idx}_real_' + save_name_base + '.mid'
     print(f'{i+1}/{num_files} : saving mxl')
     save_harmonized_score(score, out_path=mxl_file_name)
     print(f'{i+1}/{num_files} : saving midi')
     os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
 
     if generate_baseline:
-        mxl_file_name = mxl_folder + f'{idx}_gpt2' + save_name_base + '.mxl'
-        midi_file_name = midi_folder + f'{idx}_gpt2' + save_name_base + '.mid'
+        mxl_file_name = mxl_folder + f'{idx}_gpt2_' + save_name_base + '.mxl'
+        midi_file_name = midi_folder + f'{idx}_gpt2_' + save_name_base + '.mid'
         print(f'{i+1}/{num_files} : saving mxl')
         bm.generate_save_with_gpt2_baseline(idx, mxl_file_name)
         print(f'{i+1}/{num_files} : saving midi')
         os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
 
-        mxl_file_name = mxl_folder + f'{idx}_bart' + save_name_base + '.mxl'
-        midi_file_name = midi_folder + f'{idx}_bart' + save_name_base + '.mid'
+        mxl_file_name = mxl_folder + f'{idx}_bart_' + save_name_base + '.mxl'
+        midi_file_name = midi_folder + f'{idx}_bart_' + save_name_base + '.mid'
         print(f'{i+1}/{num_files} : saving mxl')
         bm.generate_save_with_bart_baseline(idx, mxl_file_name)
         print(f'{i+1}/{num_files} : saving midi')

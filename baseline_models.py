@@ -94,14 +94,41 @@ def get_bart_and_dataset(
     return bart_model, bart_dataset
 # end get_bart_and_dataset
 
-def generate_with_baseline(model, dataset, idx):
-    pass
-    # outputs = model.generate(
-    #     input_ids=input_ids.reshape(1, input_ids.shape[0]),
-    #     eos_token_id=tokenizer.eos_token_id,
-    #     max_length=model.config.max_position_embeddings,
-    #     num_beams=5,
-    #     do_sample=True,
-    #     temperature=1
-    # )
-# end generate_with_baseline
+def generate_save_with_gpt2_baseline(idx, file_name):
+    gpt_model, gpt_dataset = get_gpt2_and_dataset()
+    d = gpt_dataset[idx]
+    start_harmony_position = np.where( d['input_ids'] == baseline_tokenizer.vocab['<h>'] )[0][0]
+    input_ids = d['input_ids'][:(start_harmony_position+1)].to(gpt_model.device)
+
+    outputs = gpt_model.generate(
+        input_ids=input_ids.reshape(1, input_ids.shape[0]),
+        eos_token_id=baseline_tokenizer.eos_token_id,
+        max_length=gpt_model.config.max_position_embeddings,
+        num_beams=5,
+        do_sample=True,
+        temperature=1
+    )
+
+    output_tokens = [baseline_tokenizer.ids_to_tokens[t] for t in outputs[0].tolist()]
+
+    baseline_tokenizer.decode(output_tokens, output_format='file', output_path=file_name)
+# end generate_save_with_gpt2_baseline
+
+def generate_save_with_bart_baseline(idx, file_name):
+    bart_model, bart_dataset = get_bart_and_dataset()
+    d = bart_dataset[idx]
+    input_ids = d['input_ids'].to(bart_model.device)
+
+    outputs = bart_model.generate(
+        input_ids=input_ids.reshape(1, input_ids.shape[0]),
+        eos_token_id=baseline_tokenizer.eos_token_id,
+        max_length=bart_model.config.max_position_embeddings,
+        num_beams=5,
+        do_sample=True,
+        temperature=1
+    )
+
+    output_tokens = [baseline_tokenizer.ids_to_tokens[t] for t in input_ids.tolist()] + \
+        [baseline_tokenizer.ids_to_tokens[t] for t in outputs[0].tolist()[1:]]
+    baseline_tokenizer.decode(output_tokens, output_format='file', output_path=file_name)
+# end generate_save_with_bart_baseline
