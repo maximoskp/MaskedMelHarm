@@ -2,6 +2,8 @@ saved_models/
 figs/
 MIDIs/
 musicXMLs/
+baseline_models/
+saved_tokenizers/
 
 *.zip
 

@@ -194,3 +194,4 @@ def CSGridMLM_collate_fn(batch):
         'time_signature': torch.stack(time_signature),  # shape: (B, whatever dim)
         'pianoroll': torch.stack(pianorolls),  # shape: (B, 140, T)
     }
+# end CSGridMLM_collate_fn
