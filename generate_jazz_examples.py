@@ -7,7 +7,7 @@ from generate_utils import random_progressive_generate, structured_progressive_g
     load_model, overlay_generated_harmony, save_harmonized_score
 import os
 import numpy as np
-import baseline_models as bm
+from baseline_models import BaselineModeller
 
 generate_baseline = True
 
@@ -24,6 +24,9 @@ num_files = 1000
 val_dir = '/media/maindisk/maximos/data/gjt_melodies/Library_melodies/'
 tokenizer = CSGridMLMTokenizer(fixed_length=256)
 val_dataset = CSGridMLMDataset(val_dir, tokenizer, 512)
+
+if generate_baseline:
+    bm = BaselineModeller(data_dir = val_dir, device_name='cpu')
 
 mask_token_id = tokenizer.mask_token_id
 pad_token_id = tokenizer.pad_token_id
@@ -42,8 +45,8 @@ random_indices = np.random.permutation(len(data_files))[:num_files]
 # random_indices = [1473]
 
 # load models
-random_model = load_model(curriculum_type='random', device_name='cuda:0', tokenizer=tokenizer)
-base2_model = load_model(curriculum_type='base2', device_name='cuda:1', tokenizer=tokenizer)
+random_model = load_model(curriculum_type='random', device_name='cpu', tokenizer=tokenizer)
+base2_model = load_model(curriculum_type='base2', device_name='cpu', tokenizer=tokenizer)
 
 for i,idx in enumerate(random_indices):
     print(f'{i+1}/{num_files} : {idx}{data_files[idx].replace(val_dir,'').replace('/','_')}')
@@ -54,97 +57,100 @@ for i,idx in enumerate(random_indices):
     melody_grid = torch.stack([torch.tensor(encoded['pianoroll'], dtype=torch.float)])
     conditioning_vec = torch.stack([torch.tensor(encoded['time_signature'], dtype=torch.float)])
     harmony_gt = torch.stack([torch.tensor(encoded['input_ids'], dtype=torch.float)])
-    # generate with random model
-    random_generated_harmony = random_progressive_generate(
-        model=random_model,
-        melody_grid=melody_grid,
-        conditioning_vec=conditioning_vec,
-        num_stages=10,
-        mask_token_id=tokenizer.mask_token_id,
-        temperature=1.0,
-        strategy='sample',
-        pad_token_id=pad_token_id,      # token ID for <pad>
-        nc_token_id=nc_token_id,       # token ID for <nc>
-        force_fill=True         # disallow <pad>/<nc> before melody ends
-    )
-    random_output_tokens = []
-    for t in random_generated_harmony[0].tolist():
-        random_output_tokens.append( tokenizer.ids_to_tokens[t] )
-    # generate with base2 model
-    base2_generated_harmony = structured_progressive_generate(
-        model=base2_model,
-        melody_grid=melody_grid,
-        conditioning_vec=conditioning_vec,
-        num_stages=10,
-        mask_token_id=tokenizer.mask_token_id,
-        temperature=1.0,
-        strategy='sample',
-        pad_token_id=pad_token_id,      # token ID for <pad>
-        nc_token_id=nc_token_id,       # token ID for <nc>
-        force_fill=True         # disallow <pad>/<nc> before melody ends
-    )
-    base2_output_tokens = []
-    for t in base2_generated_harmony[0].tolist():
-        base2_output_tokens.append( tokenizer.ids_to_tokens[t] )
-    # keep ground truth
-    harmony_gt_tokens = []
-    for t in harmony_gt[0].tolist():
-        harmony_gt_tokens.append( tokenizer.ids_to_tokens[t] )
-    # make musicXML files
-    # random
-    print(f'{i+1}/{num_files} : processing random')
-    score = overlay_generated_harmony(
-        encoded['melody_part'],
-        random_output_tokens,
-        encoded['ql_per_quantum'],
-        encoded['skip_steps']
-    )
-    mxl_file_name = mxl_folder + f'{idx}_random_' + save_name_base + '.mxl'
-    midi_file_name = midi_folder + f'{idx}_random_' + save_name_base + '.mid'
-    print(f'{i+1}/{num_files} : saving mxl')
-    save_harmonized_score(score, out_path=mxl_file_name)
-    print(f'{i+1}/{num_files} : saving midi')
-    os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
-    # base2
-    print(f'{i+1}/{num_files} : processing base2')
-    score = overlay_generated_harmony(
-        encoded['melody_part'],
-        base2_output_tokens,
-        encoded['ql_per_quantum'],
-        encoded['skip_steps']
-    )
-    mxl_file_name = mxl_folder + f'{idx}_base2_' + save_name_base + '.mxl'
-    midi_file_name = midi_folder + f'{idx}_base2_' + save_name_base + '.mid'
-    print(f'{i+1}/{num_files} : saving mxl')
-    save_harmonized_score(score, out_path=mxl_file_name)
-    print(f'{i+1}/{num_files} : saving midi')
-    os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
-    # real
-    print(f'{i+1}/{num_files} : processing real')
-    score = overlay_generated_harmony(
-        encoded['melody_part'],
-        harmony_gt_tokens,
-        encoded['ql_per_quantum'],
-        encoded['skip_steps']
-    )
-    mxl_file_name = mxl_folder + f'{idx}_real_' + save_name_base + '.mxl'
-    midi_file_name = midi_folder + f'{idx}_real_' + save_name_base + '.mid'
-    print(f'{i+1}/{num_files} : saving mxl')
-    save_harmonized_score(score, out_path=mxl_file_name)
-    print(f'{i+1}/{num_files} : saving midi')
-    os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
-
-    if generate_baseline:
-        mxl_file_name = mxl_folder + f'{idx}_gpt2_' + save_name_base + '.mxl'
-        midi_file_name = midi_folder + f'{idx}_gpt2_' + save_name_base + '.mid'
+    try:
+        # generate with random model
+        random_generated_harmony = random_progressive_generate(
+            model=random_model,
+            melody_grid=melody_grid,
+            conditioning_vec=conditioning_vec,
+            num_stages=10,
+            mask_token_id=tokenizer.mask_token_id,
+            temperature=1.0,
+            strategy='sample',
+            pad_token_id=pad_token_id,      # token ID for <pad>
+            nc_token_id=nc_token_id,       # token ID for <nc>
+            force_fill=True         # disallow <pad>/<nc> before melody ends
+        )
+        random_output_tokens = []
+        for t in random_generated_harmony[0].tolist():
+            random_output_tokens.append( tokenizer.ids_to_tokens[t] )
+        # generate with base2 model
+        base2_generated_harmony = structured_progressive_generate(
+            model=base2_model,
+            melody_grid=melody_grid,
+            conditioning_vec=conditioning_vec,
+            num_stages=10,
+            mask_token_id=tokenizer.mask_token_id,
+            temperature=1.0,
+            strategy='sample',
+            pad_token_id=pad_token_id,      # token ID for <pad>
+            nc_token_id=nc_token_id,       # token ID for <nc>
+            force_fill=True         # disallow <pad>/<nc> before melody ends
+        )
+        base2_output_tokens = []
+        for t in base2_generated_harmony[0].tolist():
+            base2_output_tokens.append( tokenizer.ids_to_tokens[t] )
+        # keep ground truth
+        harmony_gt_tokens = []
+        for t in harmony_gt[0].tolist():
+            harmony_gt_tokens.append( tokenizer.ids_to_tokens[t] )
+        # make musicXML files
+        # random
+        print(f'{i+1}/{num_files} : processing random')
+        score = overlay_generated_harmony(
+            encoded['melody_part'],
+            random_output_tokens,
+            encoded['ql_per_quantum'],
+            encoded['skip_steps']
+        )
+        mxl_file_name = mxl_folder + f'{idx}_random_' + save_name_base + '.mxl'
+        midi_file_name = midi_folder + f'{idx}_random_' + save_name_base + '.mid'
         print(f'{i+1}/{num_files} : saving mxl')
-        bm.generate_save_with_gpt2_baseline(idx, mxl_file_name)
+        save_harmonized_score(score, out_path=mxl_file_name)
+        print(f'{i+1}/{num_files} : saving midi')
+        os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
+        # base2
+        print(f'{i+1}/{num_files} : processing base2')
+        score = overlay_generated_harmony(
+            encoded['melody_part'],
+            base2_output_tokens,
+            encoded['ql_per_quantum'],
+            encoded['skip_steps']
+        )
+        mxl_file_name = mxl_folder + f'{idx}_base2_' + save_name_base + '.mxl'
+        midi_file_name = midi_folder + f'{idx}_base2_' + save_name_base + '.mid'
+        print(f'{i+1}/{num_files} : saving mxl')
+        save_harmonized_score(score, out_path=mxl_file_name)
+        print(f'{i+1}/{num_files} : saving midi')
+        os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
+        # real
+        print(f'{i+1}/{num_files} : processing real')
+        score = overlay_generated_harmony(
+            encoded['melody_part'],
+            harmony_gt_tokens,
+            encoded['ql_per_quantum'],
+            encoded['skip_steps']
+        )
+        mxl_file_name = mxl_folder + f'{idx}_real_' + save_name_base + '.mxl'
+        midi_file_name = midi_folder + f'{idx}_real_' + save_name_base + '.mid'
+        print(f'{i+1}/{num_files} : saving mxl')
+        save_harmonized_score(score, out_path=mxl_file_name)
         print(f'{i+1}/{num_files} : saving midi')
         os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
 
-        mxl_file_name = mxl_folder + f'{idx}_bart_' + save_name_base + '.mxl'
-        midi_file_name = midi_folder + f'{idx}_bart_' + save_name_base + '.mid'
-        print(f'{i+1}/{num_files} : saving mxl')
-        bm.generate_save_with_bart_baseline(idx, mxl_file_name)
-        print(f'{i+1}/{num_files} : saving midi')
-        os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
+        if generate_baseline:
+            mxl_file_name = mxl_folder + f'{idx}_gpt2_' + save_name_base + '.mxl'
+            midi_file_name = midi_folder + f'{idx}_gpt2_' + save_name_base + '.mid'
+            print(f'{i+1}/{num_files} : saving mxl')
+            bm.generate_save_with_gpt2_baseline(idx, mxl_file_name)
+            print(f'{i+1}/{num_files} : saving midi')
+            os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
+
+            mxl_file_name = mxl_folder + f'{idx}_bart_' + save_name_base + '.mxl'
+            midi_file_name = midi_folder + f'{idx}_bart_' + save_name_base + '.mid'
+            print(f'{i+1}/{num_files} : saving mxl')
+            bm.generate_save_with_bart_baseline(idx, mxl_file_name)
+            print(f'{i+1}/{num_files} : saving midi')
+            os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
+    except:
+        print('problem with file:', save_name_base)

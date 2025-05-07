@@ -7,7 +7,7 @@ from generate_utils import random_progressive_generate, structured_progressive_g
     load_model, overlay_generated_harmony, save_harmonized_score
 import os
 import numpy as np
-import baseline_models as bm
+from baseline_models import BaselineModeller
 
 generate_baseline = True
 
@@ -19,11 +19,14 @@ os.makedirs('MIDIs', exist_ok=True)
 os.makedirs(mxl_folder, exist_ok=True)
 os.makedirs(midi_folder, exist_ok=True)
 # how many files to generate
-num_files = 3
+num_files = 1000
 
 val_dir = '/media/maindisk/maximos/data/hooktheory_all12_test'
 tokenizer = CSGridMLMTokenizer(fixed_length=256)
 val_dataset = CSGridMLMDataset(val_dir, tokenizer, 512)
+
+if generate_baseline:
+    bm = BaselineModeller(data_dir = val_dir, device_name='cpu')
 
 mask_token_id = tokenizer.mask_token_id
 pad_token_id = tokenizer.pad_token_id
@@ -42,8 +45,8 @@ random_indices = np.random.permutation(len(data_files))[:num_files]
 # random_indices = [1473]
 
 # load models
-random_model = load_model(curriculum_type='random', device_name='cuda:0', tokenizer=tokenizer)
-base2_model = load_model(curriculum_type='base2', device_name='cuda:1', tokenizer=tokenizer)
+random_model = load_model(curriculum_type='random', device_name='cpu', tokenizer=tokenizer)
+base2_model = load_model(curriculum_type='base2', device_name='cpu', tokenizer=tokenizer)
 
 for i,idx in enumerate(random_indices):
     print(f'{i+1}/{num_files} : {idx}{data_files[idx].replace(val_dir,'').replace('/','_')}')

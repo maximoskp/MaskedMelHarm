@@ -277,8 +277,6 @@ def save_harmonized_score(score, title="Harmonized Piece", out_path="harmonized.
 # end save_harmonized_score
 
 def load_model(curriculum_type = 'random', device_name = 'cuda:0', tokenizer=None):
-    curriculum_type = 'random'
-    device_name = 'cuda:1'
     if device_name == 'cpu':
         device = torch.device('cpu')
     else:
@@ -286,6 +284,7 @@ def load_model(curriculum_type = 'random', device_name = 'cuda:0', tokenizer=Non
             device = torch.device(device_name)
         else:
             print('Selected device not available: ' + device_name)
+            device = torch.device('cpu')
     model = GridMLMMelHarm(
         chord_vocab_size=len(tokenizer.vocab),
         device=device
