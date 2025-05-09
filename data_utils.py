@@ -5,6 +5,7 @@ import os
 import numpy as np
 from music21 import converter, note, chord, harmony, meter, stream
 import torch.nn.functional as F
+from tqdm import tqdm
 
 def extract_lead_sheet_info(xml_path, quantization='16th', fixed_length=None):
     # Load the score and flatten
@@ -146,7 +147,7 @@ def compute_normalized_token_entropy(logits, target_ids, pad_token_id=None):
 # end compute_token_entropy
 
 class CSGridMLMDataset(Dataset):
-    def __init__(self, root_dir, tokenizer, fixed_length=512):
+    def __init__(self, root_dir, tokenizer, fixed_length=512, frontloading=True):
         self.data_files = []
         for dirpath, _, filenames in os.walk(root_dir):
             for file in filenames:
@@ -155,15 +156,30 @@ class CSGridMLMDataset(Dataset):
                     self.data_files.append(full_path)
         self.tokenizer = tokenizer
         self.fixed_length = fixed_length
+        self.frontloading = frontloading
+        if self.frontloading:
+            print('Frontloading data.')
+            self.encoded = []
+            for data_file in tqdm(self.data_files):
+                try:
+                    self.encoded.append( self.tokenizer.encode( data_file ) )
+                except:
+                    print('Problem in:', data_file)
     # end init
 
     def __len__(self):
-        return len(self.data_files)
+        if self.frontloading:
+            return len(self.encoded)
+        else:
+            return len(self.data_files)
     # end len
 
     def __getitem__(self, idx):
-        data_file = self.data_files[idx]
-        encoded = self.tokenizer.encode( data_file )
+        if self.frontloading:
+            encoded = self.encoded[idx]
+        else:
+            data_file = self.data_files[idx]
+            encoded = self.tokenizer.encode( data_file )
         return {
             'input_ids': encoded['input_ids'],
             'attention_mask': encoded['attention_mask'],

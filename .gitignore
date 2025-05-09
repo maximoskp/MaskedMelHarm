@@ -1,6 +1,7 @@
 saved_models/
 figs/
 MIDIs/
+MIDIs_back/
 musicXMLs/
 baseline_models/
 saved_tokenizers/

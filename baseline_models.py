@@ -104,7 +104,7 @@ class BaselineModeller():
         self.bart_model.to(device)
     # end make_bart_and_dataset
 
-    def generate_save_with_gpt2_baseline(self, idx, file_name):
+    def generate_save_with_gpt2_baseline(self, idx, file_name, input_melody_part=None):
         d = self.gpt_dataset[idx]
         start_harmony_position = np.where( d['input_ids'] == self.baseline_tokenizer.vocab['<h>'] )[0][0]
         input_ids = d['input_ids'][:(start_harmony_position+1)].to(self.gpt_model.device)
@@ -120,10 +120,10 @@ class BaselineModeller():
 
         output_tokens = [self.baseline_tokenizer.ids_to_tokens[t] for t in outputs[0].tolist()]
 
-        self.baseline_tokenizer.decode(output_tokens, output_format='file', output_path=file_name)
+        self.baseline_tokenizer.decode(output_tokens, input_melody_part=input_melody_part, output_format='file', output_path=file_name)
     # end generate_save_with_gpt2_baseline
 
-    def generate_save_with_bart_baseline(self, idx, file_name):
+    def generate_save_with_bart_baseline(self, idx, file_name, input_melody_part=None):
         d = self.bart_dataset[idx]
         input_ids = d['input_ids'].to(self.bart_model.device)
 
@@ -138,6 +138,6 @@ class BaselineModeller():
 
         output_tokens = [self.baseline_tokenizer.ids_to_tokens[t] for t in input_ids.tolist()] + \
             [self.baseline_tokenizer.ids_to_tokens[t] for t in outputs[0].tolist()[1:]]
-        self.baseline_tokenizer.decode(output_tokens, output_format='file', output_path=file_name)
+        self.baseline_tokenizer.decode(output_tokens, input_melody_part=input_melody_part, output_format='file', output_path=file_name)
     # end generate_save_with_bart_baseline
 # end class BaselineModeller

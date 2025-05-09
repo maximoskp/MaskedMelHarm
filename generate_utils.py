@@ -1,11 +1,11 @@
 import torch
 import torch.nn.functional as F
 from train_utils import apply_structured_masking
-from music21 import harmony, stream, metadata, chord, note
+from music21 import harmony, stream, metadata, chord, note, key, meter, tempo
 import mir_eval
 import numpy as np
 from copy import deepcopy
-from models import GridMLMMelHarm
+from models import GridMLMMelHarm, GridMLMMelHarmNoStage
 
 def random_progressive_generate(
     model,
@@ -153,6 +153,23 @@ def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_s
     # melody_part = melody_part.makeMeasures()
     # chords_part = deepcopy(melody_part)
     # Create deep copy of flat melody part
+    # Create a new part for filtered content
+    filtered_part = stream.Part()
+    filtered_part.id = melody_part.id  # Preserve ID
+
+    # Copy key and time signatures from the original part
+    for el in melody_part.recurse().getElementsByClass((key.KeySignature, meter.TimeSignature,  tempo.MetronomeMark)):
+        if el.offset < 64:
+            filtered_part.insert(el.offset, el)
+
+    # Copy notes and rests with offset < 64
+    for el in melody_part.flat.notesAndRests:
+        if el.offset < 64:
+            filtered_part.insert(el.offset, el)
+
+    # Replace the original part with the filtered one
+    melody_part = filtered_part
+
     harmonized_part = deepcopy(melody_part)
     
     # Remove old chord symbols
@@ -182,7 +199,7 @@ def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_s
             continue
         if mir_chord == last_chord_symbol:
             continue
-
+        
         offset = (i + skip_steps) * ql_per_16th
 
         # Decode mir_eval chord symbol to chord symbol object
@@ -276,7 +293,7 @@ def save_harmonized_score(score, title="Harmonized Piece", out_path="harmonized.
     score.write('musicxml', fp=out_path)
 # end save_harmonized_score
 
-def load_model(curriculum_type = 'random', device_name = 'cuda:0', tokenizer=None):
+def load_model(curriculum_type = 'random', device_name = 'cuda:0', tokenizer=None, pianoroll_dim=100):
     if device_name == 'cpu':
         device = torch.device('cpu')
     else:
@@ -286,6 +303,29 @@ def load_model(curriculum_type = 'random', device_name = 'cuda:0', tokenizer=Non
             print('Selected device not available: ' + device_name)
             device = torch.device('cpu')
     model = GridMLMMelHarm(
+        chord_vocab_size=len(tokenizer.vocab),
+        device=device,
+        pianoroll_dim=pianoroll_dim,
+    )
+    model_path = 'saved_models/' + curriculum_type +  '.pt'
+    # checkpoint = torch.load(model_path, map_location=device_name, weights_only=True)
+    checkpoint = torch.load(model_path, map_location=device_name)
+    model.load_state_dict(checkpoint)
+    model.eval()
+    model.to(device)
+    return model
+# end load_model
+
+def load_model_no_stage(curriculum_type = 'no_stage/base2', device_name = 'cuda:0', tokenizer=None):
+    if device_name == 'cpu':
+        device = torch.device('cpu')
+    else:
+        if torch.cuda.is_available():
+            device = torch.device(device_name)
+        else:
+            print('Selected device not available: ' + device_name)
+            device = torch.device('cpu')
+    model = GridMLMMelHarmNoStage(
         chord_vocab_size=len(tokenizer.vocab),
         device=device
     )

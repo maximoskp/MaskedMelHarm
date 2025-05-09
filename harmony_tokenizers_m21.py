@@ -525,7 +525,7 @@ class MergedMelHarmTokenizer(PreTrainedTokenizer):
         }
     # end encode
 
-    def decode(self, token_sequence, output_format='text', output_path='test.mxl'):
+    def decode(self, token_sequence, input_melody_part=None, output_format='text', output_path='test.mxl'):
 
         # Step 1: Strip <pad> tokens and split into melody and harmony parts
         token_sequence = [token for token in token_sequence if token != self.pad_token]  # Remove all <pad> tokens
@@ -539,7 +539,10 @@ class MergedMelHarmTokenizer(PreTrainedTokenizer):
         harmony_tokens = token_sequence[split_index + 1:]  # Exclude the <h> token
 
         # Step 2: Decode melody
-        melody_part = self.melody_tokenizer.decode(melody_tokens)
+        if input_melody_part is None:
+            melody_part = self.melody_tokenizer.decode(melody_tokens)
+        else:
+            melody_part = input_melody_part.makeMeasures()
         melody_for_midi = deepcopy(melody_part)
         # create a part for chords in midi format
         chords_part = stream.Part()
