@@ -8,10 +8,18 @@ import torch
 
 
 class BaselineModeller():
-    def __init__(self, data_dir = '/media/maindisk/maximos/data/hooktheory_all12_test', device_name='cpu'):
+    def __init__(
+            self,
+            model_base_path='baseline_models/saved_models/',
+            num_heads=16,
+            data_dir = '/media/maindisk/maximos/data/hooktheory_all12_test',
+            device_name='cpu'
+        ):
         melody_tokenizer = MelodyPitchTokenizer.from_pretrained('saved_tokenizers/MelodyPitchTokenizer')
         harmony_tokenizer = ChordSymbolTokenizer.from_pretrained('saved_tokenizers/ChordSymbolTokenizer')
         self.baseline_tokenizer = MergedMelHarmTokenizer(melody_tokenizer, harmony_tokenizer)
+        self.model_base_path = model_base_path
+        self.num_heads = num_heads
         self.device_name = device_name
         self.data_dir = data_dir
         self.make_gpt2_and_dataset()
@@ -19,14 +27,14 @@ class BaselineModeller():
 
     def make_gpt2_and_dataset(
         self,
-        model_path = 'baseline_models/saved_models/gpt/ChordSymbolTokenizer/ChordSymbolTokenizer.pt',
+        model_path = 'gpt/ChordSymbolTokenizer/ChordSymbolTokenizer.pt',
     ):
         config = AutoConfig.from_pretrained(
             "gpt2",
             vocab_size=len(self.baseline_tokenizer.vocab),
             n_positions=512,
             n_layer=8,
-            n_head=16,
+            n_head=self.num_heads,
             pad_token_id=self.baseline_tokenizer.vocab[self.baseline_tokenizer.pad_token],
             bos_token_id=self.baseline_tokenizer.vocab[self.baseline_tokenizer.bos_token],
             eos_token_id=self.baseline_tokenizer.vocab[self.baseline_tokenizer.eos_token],
@@ -43,7 +51,7 @@ class BaselineModeller():
             else:
                 print('Selected device not available: ' + self.device_name)
 
-        checkpoint = torch.load(model_path, map_location=self.device_name, weights_only=True)
+        checkpoint = torch.load(self.model_base_path + model_path, map_location=self.device_name, weights_only=True)
         self.gpt_model.load_state_dict(checkpoint)
 
         self.gpt_model.eval()
@@ -59,7 +67,7 @@ class BaselineModeller():
 
     def make_bart_and_dataset(
         self,
-        model_path = 'baseline_models/saved_models/bart/ChordSymbolTokenizer/ChordSymbolTokenizer.pt',
+        model_path = 'bart/ChordSymbolTokenizer/ChordSymbolTokenizer.pt',
     ):
         bart_config = BartConfig(
             vocab_size=len(self.baseline_tokenizer.vocab),
@@ -70,10 +78,10 @@ class BaselineModeller():
             forced_eos_token_id=self.baseline_tokenizer.eos_token_id,
             max_position_embeddings=512,
             encoder_layers=8,
-            encoder_attention_heads=16,
+            encoder_attention_heads=self.num_heads,
             encoder_ffn_dim=512,
             decoder_layers=8,
-            decoder_attention_heads=16,
+            decoder_attention_heads=self.num_heads,
             decoder_ffn_dim=512,
             d_model=512,
             encoder_layerdrop=0.25,
@@ -97,7 +105,7 @@ class BaselineModeller():
             else:
                 print('Selected device not available: ' + self.device_name)
 
-        checkpoint = torch.load(model_path, map_location=self.device_name, weights_only=True)
+        checkpoint = torch.load(self.model_base_path + model_path, map_location=self.device_name, weights_only=True)
         self.bart_model.load_state_dict(checkpoint)
 
         self.bart_model.eval()
@@ -114,12 +122,11 @@ class BaselineModeller():
             eos_token_id=self.baseline_tokenizer.eos_token_id,
             max_length=self.gpt_model.config.max_position_embeddings,
             num_beams=5,
-            do_sample=True,
-            temperature=1
+            # do_sample=True,
+            # temperature=1
         )
 
         output_tokens = [self.baseline_tokenizer.ids_to_tokens[t] for t in outputs[0].tolist()]
-
         self.baseline_tokenizer.decode(output_tokens, input_melody_part=input_melody_part, output_format='file', output_path=file_name)
     # end generate_save_with_gpt2_baseline
 
@@ -132,8 +139,8 @@ class BaselineModeller():
             eos_token_id=self.baseline_tokenizer.eos_token_id,
             max_length=self.bart_model.config.max_position_embeddings,
             num_beams=5,
-            do_sample=True,
-            temperature=1
+            # do_sample=True,
+            # temperature=1
         )
 
         output_tokens = [self.baseline_tokenizer.ids_to_tokens[t] for t in input_ids.tolist()] + \

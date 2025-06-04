@@ -2,9 +2,14 @@ saved_models/
 figs/
 MIDIs/
 MIDIs_back/
+MIDIs_tmp/
+MIDIs_hr/
 musicXMLs/
+musicXMLs_hr/
+musicXMLs_back/
 baseline_models/
 saved_tokenizers/
+data/
 
 *.zip
 

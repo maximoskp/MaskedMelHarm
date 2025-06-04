@@ -19,16 +19,16 @@ os.makedirs('musicXMLs', exist_ok=True)
 os.makedirs('MIDIs', exist_ok=True)
 os.makedirs(mxl_folder, exist_ok=True)
 os.makedirs(midi_folder, exist_ok=True)
-# how many files to generate
-num_files = 1000
 
-val_dir = '/media/maindisk/maximos/data/hooktheory_all12_test'
+# val_dir = '/media/maindisk/maximos/data/hooktheory_all12_test'
+val_dir = '/media/maindisk/maximos/data/hooktheory_test'
 tokenizer = CSGridMLMTokenizer(fixed_length=256)
 tokenizer_noPCs = CSGridMLMTokenizerNoPCs(fixed_length=256)
 # val_dataset = CSGridMLMDataset(val_dir, tokenizer, 512)
 
 if generate_baseline:
-    bm = BaselineModeller(data_dir = val_dir, device_name='cpu')
+    baseline_model_base_path = 'baseline_models/saved_models_big/'
+    bm = BaselineModeller(baseline_model_base_path, num_heads=8, data_dir = val_dir, device_name='cpu')
 
 mask_token_id = tokenizer.mask_token_id
 pad_token_id = tokenizer.pad_token_id
@@ -42,16 +42,23 @@ for dirpath, _, filenames in os.walk(val_dir):
             data_files.append(full_path)
 print('total data_files:', len(data_files))
 
+# how many files to generate
+num_files = len(data_files)
+
 # get random indeces from 0 to len(data_files)-1
-random_indices = np.random.permutation(len(data_files))[:num_files]
+# random_indices = np.random.permutation(len(data_files))[:num_files]
+# random_indices = np.arange(num_files)
+# random_indices = np.arange(511, 700, 1)
+random_indices = np.arange(1350, num_files, 1)
+# random_indices = [2,97]
 # random_indices = [1473]
 
 # load models
-random_model = load_model(curriculum_type='random', device_name='cpu', tokenizer=tokenizer)
-base2_model = load_model(curriculum_type='base2', device_name='cpu', tokenizer=tokenizer)
+random_model = load_model(curriculum_type='CA/random', device_name='cpu', tokenizer=tokenizer)
+base2_model = load_model(curriculum_type='CA/base2', device_name='cpu', tokenizer=tokenizer)
 if generate_ablations:
-    base2_no_stage_model = load_model_no_stage(curriculum_type='no_stage/base2', device_name='cpu', tokenizer=tokenizer)
-    base2_noPCs_model = load_model(curriculum_type='noPCs/base2', device_name='cpu', tokenizer=tokenizer_noPCs, pianoroll_dim=88)
+    base2_no_stage_model = load_model_no_stage(curriculum_type='CA/no_stage/base2', device_name='cpu', tokenizer=tokenizer)
+    base2_noPCs_model = load_model(curriculum_type='CA/noPCs/base2', device_name='cpu', tokenizer=tokenizer_noPCs, pianoroll_dim=88)
 
 for i,idx in enumerate(random_indices):
     print(f'{i+1}/{num_files} : {idx}{data_files[idx].replace(val_dir,'').replace('/','_')}')

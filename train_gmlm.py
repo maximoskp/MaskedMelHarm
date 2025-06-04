@@ -19,6 +19,7 @@ def main():
 
     # Define arguments
     parser.add_argument('-c', '--curriculum', type=str, help='Specify the curriculum type name among: ' + repr(curriculum_types), required=True)
+    parser.add_argument('-f', '--subfolder', type=str, help='Specify subfolder to save the model and results.', required=False)
     parser.add_argument('-d', '--datatrain', type=str, help='Specify the full path to the root folder of the training xml/mxl files', required=True)
     parser.add_argument('-v', '--dataval', type=str, help='Specify the full path to the root folder of the validation xml/mxl files', required=True)
     parser.add_argument('-g', '--gpu', type=int, help='Specify whether and which GPU will be used by used by index. Not using this argument means use CPU.', required=False)
@@ -29,6 +30,9 @@ def main():
     # Parse the arguments
     args = parser.parse_args()
     curriculum_type = args.curriculum
+    subfolder = ''
+    if args.subfolder:
+        subfolder = args.subfolder
     train_dir = args.datatrain
     val_dir = args.dataval
     device_name = 'cpu'
@@ -71,10 +75,12 @@ def main():
 
     # save results
     os.makedirs('results/', exist_ok=True)
-    results_path = 'results/' + curriculum_type + '.csv'
+    os.makedirs('results/' + subfolder + '/', exist_ok=True)
+    results_path = 'results/' + subfolder + '/' + curriculum_type + '.csv'
     
-    save_dir = 'saved_models/'
-    os.makedirs(save_dir, exist_ok=True)
+    os.makedirs('saved_models/', exist_ok=True)
+    os.makedirs('saved_models/' + subfolder + '/', exist_ok=True)
+    save_dir = 'saved_models/' + subfolder + '/'
     transformer_path = save_dir + curriculum_type + '.pt'
 
     train_with_curriculum(

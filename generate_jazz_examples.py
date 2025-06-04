@@ -28,7 +28,8 @@ tokenizer_noPCs = CSGridMLMTokenizerNoPCs(fixed_length=256)
 # val_dataset = CSGridMLMDataset(val_dir, tokenizer, 512)
 
 if generate_baseline:
-    bm = BaselineModeller(data_dir = val_dir, device_name='cpu')
+    baseline_model_base_path = 'baseline_models/saved_models_big/'
+    bm = BaselineModeller(baseline_model_base_path, num_heads=16, data_dir = val_dir, device_name='cpu')
 
 mask_token_id = tokenizer.mask_token_id
 pad_token_id = tokenizer.pad_token_id
@@ -43,7 +44,8 @@ for dirpath, _, filenames in os.walk(val_dir):
 print('total data_files:', len(data_files))
 
 # get random indeces from 0 to len(data_files)-1
-random_indices = np.random.permutation(len(data_files))[:num_files]
+# random_indices = np.random.permutation(len(data_files))[:num_files]
+random_indices = np.arange(num_files)
 # random_indices = [1473]
 
 # load models

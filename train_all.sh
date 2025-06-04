@@ -2,21 +2,21 @@
 
 # List of Python scripts with their respective arguments
 
-# scripts=(
-#     "train_gmlm.py -c no -s 5 -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 0 -e 100 -l 1e-4 -b 16"
-#     "train_gmlm.py -c random -s 5 -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 0 -e 100 -l 1e-4 -b 16"
-#     "train_gmlm.py -c ts_blank -s 5 -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 1 -e 100 -l 1e-4 -b 16"
-#     "train_gmlm.py -c ts_incr -s 5 -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 1 -e 100 -l 1e-4 -b 16"
-# )
-
 scripts=(
-    # "train_gmlm.py -c random -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 0 -e 15 -l 1e-4 -b 32"
-    # "train_gmlm.py -c base2 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 1 -e 15 -l 1e-4 -b 32"
-    "train_gmlm_no_stage.py -c base2 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 0 -e 15 -l 1e-4 -b 40"
-    "train_gmlm_no_pcs.py -c base2 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 1 -e 15 -l 1e-4 -b 40"
-    "train_gmlm_no_stage.py -c random -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 2 -e 15 -l 1e-4 -b 20"
-    "train_gmlm_no_pcs.py -c random -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 2 -e 15 -l 1e-4 -b 20"
+    "train_gmlm.py -c random -f CA -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 0 -e 50 -l 1e-4 -b 20"
+    "train_gmlm.py -c base2 -f CA -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 0 -e 50 -l 1e-4 -b 20"
+    "train_gmlm_no_pcs.py -c base2 -f CA -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 1 -e 50 -l 1e-4 -b 20"
+    "train_gmlm_no_stage.py -c base2 -f CA -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 1 -e 50 -l 1e-4 -b 20"
 )
+
+# scripts=(
+#     # "train_gmlm.py -c random -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 0 -e 15 -l 1e-4 -b 32"
+#     # "train_gmlm.py -c base2 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 1 -e 15 -l 1e-4 -b 32"
+#     "train_gmlm_no_stage.py -c base2 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 0 -e 15 -l 1e-4 -b 40"
+#     "train_gmlm_no_pcs.py -c base2 -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 1 -e 15 -l 1e-4 -b 40"
+#     "train_gmlm_no_stage.py -c random -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 2 -e 15 -l 1e-4 -b 20"
+#     "train_gmlm_no_pcs.py -c random -d /media/maindisk/maximos/data/hooktheory_all12_train -v /media/maindisk/maximos/data/hooktheory_all12_test -g 2 -e 15 -l 1e-4 -b 20"
+# )
 
 # Name of the conda environment
 conda_env="torch"

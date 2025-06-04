@@ -361,7 +361,7 @@ def train_with_curriculum(
 
                 tepoch.set_postfix(loss=train_loss, accuracy=train_accuracy)
                 step += 1
-                if step%(total_steps//100) == 0 or step == total_steps:
+                if step%(total_steps//epochs) == 0 or step == total_steps:
                     best_val_loss, saving_version = validation_loop(
                         model,
                         valloader,

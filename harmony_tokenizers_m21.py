@@ -526,7 +526,10 @@ class MergedMelHarmTokenizer(PreTrainedTokenizer):
     # end encode
 
     def decode(self, token_sequence, input_melody_part=None, output_format='text', output_path='test.mxl'):
-
+        # auxiliary function to check if chords are equal
+        def chords_are_equal(c1, c2):
+            return sorted(p.name for p in c1.pitches) == sorted(p.name for p in c2.pitches)
+        # end chords_are_equal
         # Step 1: Strip <pad> tokens and split into melody and harmony parts
         token_sequence = [token for token in token_sequence if token != self.pad_token]  # Remove all <pad> tokens
 
@@ -544,6 +547,9 @@ class MergedMelHarmTokenizer(PreTrainedTokenizer):
         else:
             melody_part = input_melody_part.makeMeasures()
         melody_for_midi = deepcopy(melody_part)
+        # Remove old chord symbols
+        for el in melody_for_midi.recurse().getElementsByClass(harmony.ChordSymbol):
+            melody_for_midi.remove(el)
         # create a part for chords in midi format
         chords_part = stream.Part()
         chords_measure = None
@@ -579,17 +585,30 @@ class MergedMelHarmTokenizer(PreTrainedTokenizer):
                     ts = current_measure.getTimeSignatures(returnDefault=True)[0]
                     measure_length = ts.barDuration.quarterLength
 
-                    for idx, (ch_offset, ch_obj) in enumerate(chords_in_measure):
+                    idx = 0
+                    while idx < len(chords_in_measure): #, (ch_offset, ch_obj) in enumerate(chords_in_measure):
+                        if idx == 0:
+                            ch_offset = chords_in_measure[idx][0]
+                            ch_obj = chords_in_measure[idx][1]
+                        else:
+                            if not chords_are_equal( ch_obj , chords_in_measure[idx][1] ):
+                                ch_offset = chords_in_measure[idx][0]
+                                ch_obj = chords_in_measure[idx][1]
                         if idx < len(chords_in_measure) - 1:
                             next_offset = chords_in_measure[idx + 1][0]
-                            chord_duration = next_offset - ch_offset
+                            if chords_are_equal( ch_obj , chords_in_measure[idx + 1][1] ):
+                                chord_duration = next_offset - ch_offset + chords_in_measure[idx + 1][1].duration.quarterLength
+                            else:
+                                chord_duration = next_offset - ch_offset
                         else:
                             chord_duration = measure_length - ch_offset
                         if chord_duration <= 0:
                             print(f"Invalid duration ({chord_duration}), adjusted to minimal duration.")
                             chord_duration = 0.25
                         ch_obj.duration = duration.Duration(chord_duration)
-                        chords_measure.insert(ch_offset, ch_obj)
+                        if ch_obj not in chords_measure:
+                            chords_measure.insert(ch_offset, ch_obj)
+                        idx += 1
 
                 # Initialize next measure clearly here:
                 current_measure_index += 1
@@ -628,10 +647,11 @@ class MergedMelHarmTokenizer(PreTrainedTokenizer):
                     print(f'cannot decode tokens: {chord_tokens}')
 
                 if chord_symbol_obj and chord_obj:
-                    if current_measure_index < len(measures):
-                        measure = measures[current_measure_index]
-                        chord_symbol_obj.offset = quantized_time
-                        measure.insert(quantized_time, chord_symbol_obj)
+                    # __max__ do not append chord symbols on melody
+                    # if current_measure_index < len(measures):
+                    #     measure = measures[current_measure_index]
+                    #     chord_symbol_obj.offset = quantized_time
+                    #     measure.insert(quantized_time, chord_symbol_obj)
 
                     # Store chord offset and object to calculate duration later
                     chords_in_measure.append((quantized_time, chord_obj))
@@ -645,18 +665,31 @@ class MergedMelHarmTokenizer(PreTrainedTokenizer):
 
             ts = melody_measure.getTimeSignatures(returnDefault=True)[0]
             measure_length = ts.barDuration.quarterLength
-
-            for idx, (ch_offset, ch_obj) in enumerate(chords_in_measure):
+            
+            idx = 0
+            while idx < len(chords_in_measure): #, (ch_offset, ch_obj) in enumerate(chords_in_measure):
+                if idx == 0:
+                    ch_offset = chords_in_measure[idx][0]
+                    ch_obj = chords_in_measure[idx][1]
+                else:
+                    if not chords_are_equal( ch_obj , chords_in_measure[idx][1] ):
+                        ch_offset = chords_in_measure[idx][0]
+                        ch_obj = chords_in_measure[idx][1]
                 if idx < len(chords_in_measure) - 1:
                     next_offset = chords_in_measure[idx + 1][0]
-                    chord_duration = next_offset - ch_offset
+                    if chords_are_equal( ch_obj , chords_in_measure[idx + 1][1] ):
+                        chord_duration = next_offset - ch_offset + chords_in_measure[idx + 1][1].duration.quarterLength
+                    else:
+                        chord_duration = next_offset - ch_offset
                 else:
                     chord_duration = measure_length - ch_offset
                 if chord_duration <= 0:
                     print(f"Invalid duration ({chord_duration}), adjusted to minimal duration.")
                     chord_duration = 0.25
                 ch_obj.duration = duration.Duration(chord_duration)
-                chords_measure.insert(ch_offset, ch_obj)
+                if ch_obj not in chords_measure:
+                    chords_measure.insert(ch_offset, ch_obj)
+                idx += 1
 
         # Assuming chords_part is your music21 stream.Part
         # for measure in chords_part.getElementsByClass('Measure'):
