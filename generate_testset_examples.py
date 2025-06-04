@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from models import GridMLMMelHarm, GridMLMMelHarmNoStage
-from GridMLM_tokenizers import CSGridMLMTokenizer, CSGridMLMTokenizerNoPCs
+from GridMLM_tokenizers import CSGridMLMTokenizer
 from data_utils import CSGridMLMDataset
 from generate_utils import random_progressive_generate, structured_progressive_generate,\
     load_model, load_model_no_stage, overlay_generated_harmony, save_harmonized_score
@@ -23,7 +23,7 @@ os.makedirs(midi_folder, exist_ok=True)
 # val_dir = '/media/maindisk/maximos/data/hooktheory_all12_test'
 val_dir = '/media/maindisk/maximos/data/hooktheory_test'
 tokenizer = CSGridMLMTokenizer(fixed_length=256)
-tokenizer_noPCs = CSGridMLMTokenizerNoPCs(fixed_length=256)
+tokenizer_noPCs = CSGridMLMTokenizer(fixed_length=256, use_pc_roll=False)
 # val_dataset = CSGridMLMDataset(val_dir, tokenizer, 512)
 
 if generate_baseline:

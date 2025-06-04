@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from models import GridMLMMelHarm
 from models import GridMLMMelHarm, GridMLMMelHarmNoStage
-from GridMLM_tokenizers import CSGridMLMTokenizer, CSGridMLMTokenizerNoPCs
+from GridMLM_tokenizers import CSGridMLMTokenizer
 from generate_utils import random_progressive_generate, structured_progressive_generate,\
     load_model, load_model_no_stage, overlay_generated_harmony, save_harmonized_score
 import os
@@ -24,7 +24,7 @@ num_files = 1000
 
 val_dir = '/media/maindisk/maximos/data/gjt_melodies/Library_melodies/'
 tokenizer = CSGridMLMTokenizer(fixed_length=256)
-tokenizer_noPCs = CSGridMLMTokenizerNoPCs(fixed_length=256)
+tokenizer_noPCs = CSGridMLMTokenizer(fixed_length=256, use_pc_roll=False)
 # val_dataset = CSGridMLMDataset(val_dir, tokenizer, 512)
 
 if generate_baseline:
