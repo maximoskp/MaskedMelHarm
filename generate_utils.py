@@ -1,12 +1,42 @@
 import torch
 import torch.nn.functional as F
 from train_utils import apply_structured_masking
-from music21 import harmony, stream, metadata, chord, note, key, meter, tempo
+from music21 import harmony, stream, metadata, chord, note, key, meter, tempo, duration
 import mir_eval
 import numpy as np
 from copy import deepcopy
 from models import GridMLMMelHarm, GridMLMMelHarmNoStage
 import os
+
+def remove_conflicting_rests(flat_part):
+    """
+    Remove any Rest in a flattened part whose offset coincides with a Note.
+    Assumes the input stream is already flattened.
+    This also tries to fix broken duration values that have come as a result of
+    flattening.
+    """
+    cleaned = stream.Part()
+    all_notes = [el for el in flat_part if isinstance(el, note.Note)]
+    note_offsets = [n.offset for n in all_notes]
+    note_durations = [n.offset for n in all_notes]
+    for i, n in enumerate(all_notes):
+        if n.duration.quarterLength == 0:
+            if i < len(all_notes)-1:
+                n.duration = duration.Duration( note_offsets[i+1] - note_offsets[i] )
+            else:
+                n.duration = duration.Duration( 0.5 )
+        # if i < len(all_notes)-1:
+        #     if note_durations[i] > note_offsets[i+1] - note_offsets[i]:
+        #         n.duration = duration.Duration( note_offsets[i+1] - note_offsets[i] )
+
+    for el in flat_part:
+        # Skip Rest if it shares offset with a Note
+        if isinstance(el, note.Rest) and el.offset in note_offsets:
+            continue
+        cleaned.insert(el.offset, el)
+
+    return cleaned
+# end remove_conflicting_rests
 
 def random_progressive_generate(
     model,
@@ -18,7 +48,8 @@ def random_progressive_generate(
     strategy='topk',        # 'topk' or 'sample' strategy for selecting new tokens
     pad_token_id=None,      # token ID for <pad>
     nc_token_id=None,       # token ID for <nc>
-    force_fill=True         # disallow <pad>/<nc> before melody ends
+    force_fill=True,        # disallow <pad>/<nc> before melody ends
+    chord_constraints=None  # take input harmony as constraints or generate from scratch
 ):
     device = melody_grid.device
     seq_len = melody_grid.shape[1]
@@ -26,6 +57,9 @@ def random_progressive_generate(
 
     # Start with all tokens masked
     visible_harmony = torch.full((1, seq_len), mask_token_id, dtype=torch.long, device=device)
+    if chord_constraints is not None:
+        idxs  = torch.logical_or( chord_constraints != nc_token_id , chord_constraints != pad_token_id )
+        visible_harmony[ idxs ] = chord_constraints[idxs]
 
     # Find the last index in melody_grid that contains a non-zero value
     if force_fill:
@@ -89,11 +123,15 @@ def structured_progressive_generate(
     strategy='topk',        # 'topk' or 'sample'
     pad_token_id=None,      # token ID for <pad>
     nc_token_id=None,       # token ID for <nc>
-    force_fill=True         # disallow <pad>/<nc> before melody ends
+    force_fill=True,        # disallow <pad>/<nc> before melody ends,
+    chord_constraints=None  # take input harmony as constraints or generate from scratch
 ):
     device = melody_grid.device
     seq_len = melody_grid.shape[1]
     visible_harmony = torch.full((1, seq_len), mask_token_id, dtype=torch.long, device=device)
+    if chord_constraints is not None:
+        idxs  = torch.logical_and( chord_constraints != nc_token_id , chord_constraints != pad_token_id )
+        visible_harmony[ idxs ] = chord_constraints[idxs]
 
     # Find the last index in melody_grid that contains a non-zero value
     if force_fill:
@@ -164,18 +202,18 @@ def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_s
             filtered_part.insert(el.offset, el)
 
     # Copy notes and rests with offset < 64
-    for el in melody_part.flat.notesAndRests:
+    for el in melody_part.flatten().notesAndRests:
         if el.offset < 64:
             filtered_part.insert(el.offset, el)
+    # clear conflicting rests with notes of the same offset
+    filtered_part = remove_conflicting_rests(filtered_part)
 
     # Replace the original part with the filtered one
     melody_part = filtered_part
-
-    harmonized_part = deepcopy(melody_part)
     
     # Remove old chord symbols
-    for el in harmonized_part.recurse().getElementsByClass(harmony.ChordSymbol):
-        harmonized_part.remove(el)
+    for el in melody_part.recurse().getElementsByClass(harmony.ChordSymbol):
+        melody_part.remove(el)
     
     # Prepare for clamping durations — convert melody to measures
     melody_measures = melody_part.makeMeasures()
@@ -221,6 +259,8 @@ def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_s
                 break
         # bar = next((b for b in reversed(bars) if b.offset <= offset), None)
 
+        offset = (i + skip_steps) * ql_per_16th
+        
         if bar:
             bar_start = bar.offset
             bar_end = bar_start + bar.barDuration.quarterLength
@@ -237,23 +277,6 @@ def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_s
         inserted_chords[i] = chord_symbol
         last_chord_symbol = mir_chord
 
-    # Convert flat part to one with measures
-    harmonized_with_measures = harmonized_part.makeMeasures()
-
-    # Repeat previous chord at start of bars with no chord
-    for m in harmonized_with_measures.getElementsByClass(stream.Measure):
-        bar_offset = m.offset
-        # has_chord = any(isinstance(el, harmony.ChordSymbol) and el.offset == bar_offset for el in m)
-        # has_chord = any( isinstance(el, harmony.ChordSymbol) for el in m )
-        has_chord = any(isinstance(el, harmony.ChordSymbol) and el.offset == 0. for el in m)
-        if not has_chord:
-            # Find previous chord before this measure
-            prev_chords = [el for el in harmonized_part.recurse().getElementsByClass(harmony.ChordSymbol)
-                           if el.offset < bar_offset]
-            if prev_chords:
-                prev_chord = prev_chords[-1]
-                m.insert(0.0, deepcopy(prev_chord))
-
     # Repeat previous chord at start of bars with no chord
     for m in chords_part.getElementsByClass(stream.Measure):
         bar_offset = m.offset
@@ -263,8 +286,11 @@ def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_s
         has_chord = any(isinstance(el, chord.Chord) and el.offset == 0. for el in m)
         if not has_chord:
             # Find previous chord before this measure
-            prev_chords = [el for el in chords_part.recurse().getElementsByClass(chord.Chord)
-                           if el.offset < bar_offset]
+            prev_chords = []
+            for curr_bar in chords_part.recurse().getElementsByClass(stream.Measure):
+                for el in curr_bar.recurse().getElementsByClass(chord.Chord):
+                        if curr_bar.offset + el.offset < bar_offset:
+                            prev_chords.append(el)
             if prev_chords:
                 # Remove any placeholder rests at 0.0
                 for el in m.getElementsByOffset(0.0):
@@ -273,6 +299,10 @@ def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_s
                 prev_chord = prev_chords[-1]
                 m.insert(0.0, deepcopy(prev_chord))
         else:
+            # Remove any placeholder rests at 0.0
+            for el in m.getElementsByOffset(0.0):
+                if isinstance(el, note.Rest):
+                    m.remove(el)
             # modify duration so that it doesn't affect the next bar
             for el in m.notes:
                 if isinstance(el, chord.Chord):
@@ -282,7 +312,7 @@ def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_s
 
     # Create final score with chords and melody
     score = stream.Score()
-    score.insert(0, harmonized_with_measures)
+    score.insert(0, melody_measures)
     score.insert(0, chords_part)
 
     return score
@@ -339,11 +369,11 @@ def load_model_no_stage(curriculum_type='base2', subfolder='CA', device_name='cu
     return model
 # end load_model
 
-def generate_files_with_base2(model, tokenizer, input_f, mxl_folder, midi_folder, name_suffix):
+def generate_files_with_base2(model, tokenizer, input_f, mxl_folder, midi_folder, name_suffix, use_constraints=False):
     pad_token_id = tokenizer.pad_token_id
     nc_token_id = tokenizer.nc_token_id
 
-    input_encoded = tokenizer.encode( input_f )
+    input_encoded = tokenizer.encode( input_f, keep_durations=True )
 
     harmony_real = torch.LongTensor(input_encoded['input_ids']).reshape(1, len(input_encoded['input_ids']))
     melody_grid = torch.FloatTensor( input_encoded['pianoroll'] ).reshape( 1, input_encoded['pianoroll'].shape[0], input_encoded['pianoroll'].shape[1] )
@@ -359,7 +389,8 @@ def generate_files_with_base2(model, tokenizer, input_f, mxl_folder, midi_folder
         strategy='sample',
         pad_token_id=pad_token_id,      # token ID for <pad>
         nc_token_id=nc_token_id,       # token ID for <nc>
-        force_fill=True         # disallow <pad>/<nc> before melody ends
+        force_fill=True,         # disallow <pad>/<nc> before melody ends
+        chord_constraints = harmony_real.to(model.device) if use_constraints else None
     )
     gen_output_tokens = []
     for t in base2_generated_harmony[0].tolist():
@@ -391,14 +422,14 @@ def generate_files_with_base2(model, tokenizer, input_f, mxl_folder, midi_folder
     save_harmonized_score(real_score, out_path=mxl_file_name)
     os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
 
-    return gen_output_tokens, harmony_real_tokens
+    return gen_output_tokens, harmony_real_tokens, gen_score, real_score
 # end generate_files_with_base2
 
-def generate_files_with_random(model, tokenizer, input_f, mxl_folder, midi_folder, name_suffix):
+def generate_files_with_random(model, tokenizer, input_f, mxl_folder, midi_folder, name_suffix, use_constraints=False):
     pad_token_id = tokenizer.pad_token_id
     nc_token_id = tokenizer.nc_token_id
 
-    input_encoded = tokenizer.encode( input_f )
+    input_encoded = tokenizer.encode( input_f, keep_durations=True )
 
     harmony_real = torch.LongTensor(input_encoded['input_ids']).reshape(1, len(input_encoded['input_ids']))
     melody_grid = torch.FloatTensor( input_encoded['pianoroll'] ).reshape( 1, input_encoded['pianoroll'].shape[0], input_encoded['pianoroll'].shape[1] )
@@ -414,7 +445,8 @@ def generate_files_with_random(model, tokenizer, input_f, mxl_folder, midi_folde
         strategy='sample',
         pad_token_id=pad_token_id,      # token ID for <pad>
         nc_token_id=nc_token_id,       # token ID for <nc>
-        force_fill=True         # disallow <pad>/<nc> before melody ends
+        force_fill=True,         # disallow <pad>/<nc> before melody ends
+        chord_constraints = harmony_real.to(model.device) if use_constraints else None
     )
     gen_output_tokens = []
     for t in random_generated_harmony[0].tolist():

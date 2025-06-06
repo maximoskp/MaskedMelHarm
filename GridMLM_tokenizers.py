@@ -308,17 +308,17 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         return score
     # end randomize_score
 
-    def encode(self, file_path, trim_start=True, filler_token='<nc>'):
+    def encode(self, file_path, trim_start=True, filler_token='<nc>', keep_durations=False):
         file_ext = file_path.split('.')[-1]
         if file_ext in ['xml', 'mxl', 'musicxml']:
-            return self.encode_musicXML(file_path, trim_start=trim_start, filler_token=filler_token)
+            return self.encode_musicXML(file_path, trim_start=trim_start, filler_token=filler_token, keep_durations=keep_durations)
         elif file_ext in ['mid', 'midi']:
-            return self.encode_MIDI(file_path, trim_start=trim_start, filler_token=filler_token)
+            return self.encode_MIDI(file_path, trim_start=trim_start, filler_token=filler_token, keep_durations=keep_durations)
         else:
             print('ERROR: unknown file extension:', file_ext)
     # end encode
 
-    def encode_musicXML(self, file_path, trim_start=True, filler_token='<nc>'):
+    def encode_musicXML(self, file_path, trim_start=True, filler_token='<nc>', keep_durations=False):
         # Load the score and flatten
         score = converter.parse(file_path)
         time_signature = score.recurse().getElementsByClass(meter.TimeSignature).first()
@@ -389,6 +389,11 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
             start = int(np.round(el.offset / ql_per_quantum))
             if 0 <= start < len(chord_tokens):
                 chord_tokens[start], chord_token_ids[start] = self.handle_chord_symbol(el)
+            if keep_durations:
+                end = int(np.round( (el.offset + el.duration.quarterLength) / ql_per_quantum)) + 1
+                if end < len(chord_tokens):
+                    chord_tokens[end] = '<nc>'
+                    chord_token_ids[end] = self.vocab['<nc>']
 
         # Propagate chord forward
         for i in range(1, len(chord_tokens)):
@@ -451,7 +456,7 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         }
     # end encode_musicXML
 
-    def encode_MIDI(self, file_path, trim_start=False, filler_token='<nc>'):
+    def encode_MIDI(self, file_path, trim_start=False, filler_token='<nc>', keep_durations=False):
         # Load the score and flatten
         score = converter.parse(file_path)
         time_signature = score.recurse().getElementsByClass(meter.TimeSignature).first()
@@ -527,6 +532,11 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
                 start = int(np.round(el.offset / ql_per_quantum))
                 if 0 <= start < len(chord_tokens):
                     chord_tokens[start], chord_token_ids[start] = self.handle_chord_symbol(el)
+                if keep_durations:
+                    end = int(np.round( (el.offset + el.duration.quarterLength) / ql_per_quantum)) + 1
+                    if end < len(chord_tokens):
+                        chord_tokens[end] = '<nc>'
+                        chord_token_ids[end] = self.vocab['<nc>']
 
             # Propagate chord forward
             for i in range(1, len(chord_tokens)):
