@@ -23,14 +23,14 @@ device_name = 'cuda:2'
 model_base2 = load_model(
     curriculum_type='base2',
     subfolder=subfolder,
-    device_name='cuda:2',
+    device_name='cuda:0',
     tokenizer=tokenizer,
     pianoroll_dim=100
 )
 model_random = load_model(
     curriculum_type='random',
     subfolder=subfolder,
-    device_name='cuda:2',
+    device_name='cuda:0',
     tokenizer=tokenizer,
     pianoroll_dim=100
 )
