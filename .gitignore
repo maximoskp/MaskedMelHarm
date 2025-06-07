@@ -11,6 +11,7 @@ baseline_models/
 saved_tokenizers/
 data/
 uploads/
+downloads/
 
 *.zip
 
