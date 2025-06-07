@@ -58,9 +58,9 @@ def random_progressive_generate(
     # Start with all tokens masked
     visible_harmony = torch.full((1, seq_len), mask_token_id, dtype=torch.long, device=device)
     if chord_constraints is not None:
-        idxs  = torch.logical_or( chord_constraints != nc_token_id , chord_constraints != pad_token_id )
+        idxs  = torch.logical_and( chord_constraints != nc_token_id , chord_constraints != pad_token_id )
         visible_harmony[ idxs ] = chord_constraints[idxs]
-
+    
     # Find the last index in melody_grid that contains a non-zero value
     if force_fill:
         active = (melody_grid != 0).any(dim=-1).squeeze(0)  # shape: (seq_len,)
@@ -68,6 +68,9 @@ def random_progressive_generate(
     else:
         last_active_index = -1  # Don't clamp anything if not forced
     for stage in range(num_stages):
+        # Check for early stopping
+        if not (visible_harmony == mask_token_id).any():
+            break  # All tokens revealed
         with torch.no_grad():
             logits = model(
                 melody_grid=melody_grid.to(model.device),
@@ -139,7 +142,6 @@ def structured_progressive_generate(
         last_active_index = active.nonzero(as_tuple=True)[0].max().item()
     else:
         last_active_index = -1  # Don't clamp anything if not forced
-
     for stage in range(num_stages):
         # Check for early stopping
         if not (visible_harmony == mask_token_id).any():
@@ -437,8 +439,8 @@ def generate_files_with_random(model, tokenizer, input_f, mxl_folder, midi_folde
 
     random_generated_harmony = random_progressive_generate(
         model=model,
-        melody_grid=melody_grid,
-        conditioning_vec=conditioning_vec,
+        melody_grid=melody_grid.to(model.device),
+        conditioning_vec=conditioning_vec.to(model.device),
         num_stages=10,
         mask_token_id=tokenizer.mask_token_id,
         temperature=1.0,
@@ -478,5 +480,5 @@ def generate_files_with_random(model, tokenizer, input_f, mxl_folder, midi_folde
     save_harmonized_score(real_score, out_path=mxl_file_name)
     os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
 
-    return gen_output_tokens, harmony_real_tokens
+    return gen_output_tokens, harmony_real_tokens, gen_score, real_score
 # end generate_files_with_random
