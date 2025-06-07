@@ -10,6 +10,7 @@ musicXMLs_back/
 baseline_models/
 saved_tokenizers/
 data/
+uploads/
 
 *.zip
 
