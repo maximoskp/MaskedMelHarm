@@ -7,6 +7,7 @@ import numpy as np
 from copy import deepcopy
 from models import GridMLMMelHarm, GridMLMMelHarmNoStage
 import os
+from music_utils import transpose_score
 
 def remove_conflicting_rests(flat_part):
     """
@@ -371,11 +372,20 @@ def load_model_no_stage(curriculum_type='base2', subfolder='CA', device_name='cu
     return model
 # end load_model
 
-def generate_files_with_base2(model, tokenizer, input_f, mxl_folder, midi_folder, name_suffix, use_constraints=False):
+def generate_files_with_base2(
+        model,
+        tokenizer,
+        input_f,
+        mxl_folder,
+        midi_folder,
+        name_suffix,
+        use_constraints=False,
+        normalize_tonality=False
+    ):
     pad_token_id = tokenizer.pad_token_id
     nc_token_id = tokenizer.nc_token_id
 
-    input_encoded = tokenizer.encode( input_f, keep_durations=True )
+    input_encoded = tokenizer.encode( input_f, keep_durations=True, normalize_tonality=False )
 
     harmony_real = torch.LongTensor(input_encoded['input_ids']).reshape(1, len(input_encoded['input_ids']))
     melody_grid = torch.FloatTensor( input_encoded['pianoroll'] ).reshape( 1, input_encoded['pianoroll'].shape[0], input_encoded['pianoroll'].shape[1] )
@@ -408,6 +418,8 @@ def generate_files_with_base2(model, tokenizer, input_f, mxl_folder, midi_folder
         input_encoded['ql_per_quantum'],
         input_encoded['skip_steps']
     )
+    if normalize_tonality:
+        gen_score = transpose_score(gen_score, input_encoded['back_interval'])
     mxl_file_name = mxl_folder + f'gen_{name_suffix}' + '.mxl'
     midi_file_name = midi_folder + f'gen_{name_suffix}' + '.mid'
     save_harmonized_score(gen_score, out_path=mxl_file_name)
@@ -419,6 +431,8 @@ def generate_files_with_base2(model, tokenizer, input_f, mxl_folder, midi_folder
         input_encoded['ql_per_quantum'],
         input_encoded['skip_steps']
     )
+    if normalize_tonality:
+        real_score = transpose_score(real_score, input_encoded['back_interval'])
     mxl_file_name = mxl_folder + f'real_{name_suffix}' + '.mxl'
     midi_file_name = midi_folder + f'real_{name_suffix}' + '.mid'
     save_harmonized_score(real_score, out_path=mxl_file_name)
@@ -427,11 +441,20 @@ def generate_files_with_base2(model, tokenizer, input_f, mxl_folder, midi_folder
     return gen_output_tokens, harmony_real_tokens, gen_score, real_score
 # end generate_files_with_base2
 
-def generate_files_with_random(model, tokenizer, input_f, mxl_folder, midi_folder, name_suffix, use_constraints=False):
+def generate_files_with_random(
+        model,
+        tokenizer,
+        input_f,
+        mxl_folder,
+        midi_folder,
+        name_suffix,
+        use_constraints=False,
+        normalize_tonality=False
+    ):
     pad_token_id = tokenizer.pad_token_id
     nc_token_id = tokenizer.nc_token_id
 
-    input_encoded = tokenizer.encode( input_f, keep_durations=True )
+    input_encoded = tokenizer.encode( input_f, keep_durations=True, normalize_tonality=normalize_tonality )
 
     harmony_real = torch.LongTensor(input_encoded['input_ids']).reshape(1, len(input_encoded['input_ids']))
     melody_grid = torch.FloatTensor( input_encoded['pianoroll'] ).reshape( 1, input_encoded['pianoroll'].shape[0], input_encoded['pianoroll'].shape[1] )
@@ -464,6 +487,8 @@ def generate_files_with_random(model, tokenizer, input_f, mxl_folder, midi_folde
         input_encoded['ql_per_quantum'],
         input_encoded['skip_steps']
     )
+    if normalize_tonality:
+        gen_score = transpose_score(gen_score, input_encoded['back_interval'])
     mxl_file_name = mxl_folder + f'gen_{name_suffix}' + '.mxl'
     midi_file_name = midi_folder + f'gen_{name_suffix}' + '.mid'
     save_harmonized_score(gen_score, out_path=mxl_file_name)
@@ -475,6 +500,8 @@ def generate_files_with_random(model, tokenizer, input_f, mxl_folder, midi_folde
         input_encoded['ql_per_quantum'],
         input_encoded['skip_steps']
     )
+    if normalize_tonality:
+        real_score = transpose_score(real_score, input_encoded['back_interval'])
     mxl_file_name = mxl_folder + f'real_{name_suffix}' + '.mxl'
     midi_file_name = midi_folder + f'real_{name_suffix}' + '.mid'
     save_harmonized_score(real_score, out_path=mxl_file_name)

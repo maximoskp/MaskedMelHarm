@@ -9,6 +9,7 @@ import json
 import ast
 from copy import deepcopy
 import random
+from music_utils import detect_key, get_transposition_interval, transpose_score
 
 INT_TO_ROOT_SHARP = {
     0: 'C',
@@ -308,19 +309,54 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         return score
     # end randomize_score
 
-    def encode(self, file_path, trim_start=True, filler_token='<nc>', keep_durations=False):
+    def encode(
+            self,
+            file_path,
+            trim_start=True,
+            filler_token='<nc>',
+            keep_durations=False,
+            normalize_tonality=False
+        ):
         file_ext = file_path.split('.')[-1]
         if file_ext in ['xml', 'mxl', 'musicxml']:
-            return self.encode_musicXML(file_path, trim_start=trim_start, filler_token=filler_token, keep_durations=keep_durations)
+            return self.encode_musicXML(
+                file_path,
+                trim_start=trim_start,
+                filler_token=filler_token,
+                keep_durations=keep_durations,
+                normalize_tonality=normalize_tonality
+            )
         elif file_ext in ['mid', 'midi']:
-            return self.encode_MIDI(file_path, trim_start=trim_start, filler_token=filler_token, keep_durations=keep_durations)
+            return self.encode_MIDI(
+                file_path,
+                trim_start=trim_start,
+                filler_token=filler_token,
+                keep_durations=keep_durations,
+                normalize_tonality=normalize_tonality
+            )
         else:
             print('ERROR: unknown file extension:', file_ext)
     # end encode
 
-    def encode_musicXML(self, file_path, trim_start=True, filler_token='<nc>', keep_durations=False):
+    def encode_musicXML(
+            self,
+            file_path,
+            trim_start=True,
+            filler_token='<nc>',
+            keep_durations=False,
+            normalize_tonality=False
+        ):
         # Load the score and flatten
         score = converter.parse(file_path)
+        if normalize_tonality:
+            # Detect original key
+            original_key = detect_key(score)
+            # Transpose to C major or A minor
+            to_c_or_a_interval = get_transposition_interval(original_key)
+            score = transpose_score(score, to_c_or_a_interval)
+            # Keep interval to transpose back to original key later
+            back_interval = to_c_or_a_interval.reverse()
+
         time_signature = score.recurse().getElementsByClass(meter.TimeSignature).first()
         ts_num_list = [0]*14
         ts_den_list = [0,0]
@@ -452,13 +488,30 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
             'attention_mask': attention_mask,
             'skip_steps': skip_steps,
             'melody_part':melody_part,
-            'ql_per_quantum': ql_per_quantum
+            'ql_per_quantum': ql_per_quantum,
+            'back_interval': back_interval if normalize_tonality else None
         }
     # end encode_musicXML
 
-    def encode_MIDI(self, file_path, trim_start=False, filler_token='<nc>', keep_durations=False):
+    def encode_MIDI(
+            self,
+            file_path,
+            trim_start=False,
+            filler_token='<nc>',
+            keep_durations=False,
+            normalize_tonality=False
+        ):
         # Load the score and flatten
         score = converter.parse(file_path)
+        if normalize_tonality:
+            # Detect original key
+            original_key = detect_key(score)
+            # Transpose to C major or A minor
+            to_c_or_a_interval = get_transposition_interval(original_key)
+            score = transpose_score(score, to_c_or_a_interval)
+            # Keep interval to transpose back to original key later
+            back_interval = to_c_or_a_interval.reverse()
+        
         time_signature = score.recurse().getElementsByClass(meter.TimeSignature).first()
         ts_num_list = [0]*14
         ts_den_list = [0,0]
@@ -595,7 +648,8 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
             'attention_mask': attention_mask,
             'skip_steps': skip_steps,
             'melody_part':melody_part,
-            'ql_per_quantum': ql_per_quantum
+            'ql_per_quantum': ql_per_quantum,
+            'back_interval': back_interval if normalize_tonality else None
         }
     # end encode_MIDI
 
