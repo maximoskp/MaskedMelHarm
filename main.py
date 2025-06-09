@@ -17,20 +17,32 @@ from generate_utils import generate_files_with_base2, generate_files_with_random
 
 tokenizer = CSGridMLMTokenizer(fixed_length=256)
 
-# curriculum_type = 'base2'
-subfolder = 'all12'
-device_name = 'cuda:2'
-model_base2 = load_model(
+device_name = 'cuda:0'
+model_all12_base2 = load_model(
     curriculum_type='base2',
-    subfolder=subfolder,
-    device_name='cuda:0',
+    subfolder='all12',
+    device_name=device_name,
     tokenizer=tokenizer,
     pianoroll_dim=100
 )
-model_random = load_model(
+model_all12_random = load_model(
     curriculum_type='random',
-    subfolder=subfolder,
-    device_name='cuda:0',
+    subfolder='all12',
+    device_name=device_name,
+    tokenizer=tokenizer,
+    pianoroll_dim=100
+)
+model_CA_base2 = load_model(
+    curriculum_type='base2',
+    subfolder='CA',
+    device_name=device_name,
+    tokenizer=tokenizer,
+    pianoroll_dim=100
+)
+model_CA_random = load_model(
+    curriculum_type='random',
+    subfolder='CA',
+    device_name=device_name,
     tokenizer=tokenizer,
     pianoroll_dim=100
 )
@@ -62,10 +74,11 @@ async def download_example_input_files():
     )
 # end download_example_input_files
 
-@app.post("/base2_harmonization")
-async def base2_harmonization(file: UploadFile = File(..., description='MIDI or musicXML')):
+@app.post("/base2_all12_harmonization")
+async def base2_all12_harmonization(file: UploadFile = File(..., description='MIDI or musicXML')):
     '''
-    Melodic harmonization using the midpoint doubling method.
+    Melodic harmonization using the midpoint doubling method, 
+    trained on all 12 transpositions of the dataset.
     Upload a melody plus chord constraints MIDI or musicXML file.
 
     MIDI file: should inlude a first part with the melody and an optional second part
@@ -85,34 +98,36 @@ async def base2_harmonization(file: UploadFile = File(..., description='MIDI or 
     mxl_folder = DOWNLOAD_DIR + 'base2/musicXML/'
     midi_folder = DOWNLOAD_DIR + 'base2/MIDI/'
     if file.filename.endswith('.mid') or file.filename.endswith('.midi'):
-        output_path = midi_folder + 'mid_' + f"{file_id}_{file.filename}"
+        output_path = midi_folder + 'gen_' + f"{file_id}_{file.filename}"
     elif file.filename.endswith('.xml') or file.filename.endswith('.mxl') or file.filename.endswith('.musicxml'):
-        output_path = mxl_folder + 'mid_' + f"{file_id}_{file.filename}"
+        output_path = mxl_folder + 'gen_' + f"{file_id}_{file.filename}"
     else:
         print('ERROR: unknow file extension: ', file.filename)
     os.makedirs(mxl_folder, exist_ok=True)
     os.makedirs(midi_folder, exist_ok=True)
 
     _, _, _, _ = generate_files_with_base2(
-        model=model_base2,
+        model=model_all12_base2,
         tokenizer=tokenizer,
         input_f=input_path,
         mxl_folder=mxl_folder,
         midi_folder=midi_folder,
         name_suffix=f"{file_id}_{os.path.splitext(file.filename)[0]}",
-        use_constraints=True
+        use_constraints=True,
+        normalize_tonality=False
     )
     print(input_path)
     print(output_path)
 
     # Return processed file as a downloadable response
     return FileResponse(output_path, filename=os.path.basename(output_path), media_type='application/octet-stream')
-# end base2_harmonization
+# end base2_all12_harmonization
 
-@app.post("/random_harmonization")
-async def random_harmonization(file: UploadFile = File(..., description='MIDI or musicXML')):
+@app.post("/random_all12_harmonization")
+async def random_all12_harmonization(file: UploadFile = File(..., description='MIDI or musicXML')):
     '''
-    Melodic harmonization using the midpoint doubling method.
+    Melodic harmonization using the midpoint doubling method,
+    trained on all 12 transpositions of the dataset.
     Upload a melody plus chord constraints MIDI or musicXML file.
 
     MIDI file: should inlude a first part with the melody and an optional second part
@@ -132,26 +147,127 @@ async def random_harmonization(file: UploadFile = File(..., description='MIDI or
     mxl_folder = DOWNLOAD_DIR + 'random/musicXML/'
     midi_folder = DOWNLOAD_DIR + 'random/MIDI/'
     if file.filename.endswith('.mid') or file.filename.endswith('.midi'):
-        output_path = midi_folder + 'rnd_' + f"{file_id}_{file.filename}"
+        output_path = midi_folder + 'gen_' + f"{file_id}_{file.filename}"
     elif file.filename.endswith('.xml') or file.filename.endswith('.mxl') or file.filename.endswith('.musicxml'):
-        output_path = mxl_folder + 'rnd_' + f"{file_id}_{file.filename}"
+        output_path = mxl_folder + 'gen_' + f"{file_id}_{file.filename}"
     else:
         print('ERROR: unknow file extension: ', file.filename)
     os.makedirs(mxl_folder, exist_ok=True)
     os.makedirs(midi_folder, exist_ok=True)
 
     _, _, _, _ = generate_files_with_random(
-        model=model_random,
+        model=model_all12_random,
         tokenizer=tokenizer,
         input_f=input_path,
         mxl_folder=mxl_folder,
         midi_folder=midi_folder,
         name_suffix=f"{file_id}_{os.path.splitext(file.filename)[0]}",
-        use_constraints=True
+        use_constraints=True,
+        normalize_tonality=False
     )
     print(input_path)
     print(output_path)
 
     # Return processed file as a downloadable response
     return FileResponse(output_path, filename=os.path.basename(output_path), media_type='application/octet-stream')
-# end random_harmonization
+# end random_all12_harmonization
+
+@app.post("/base2_CA_harmonization")
+async def base2_CA_harmonization(file: UploadFile = File(..., description='MIDI or musicXML')):
+    '''
+    Melodic harmonization using the midpoint doubling method, 
+    trained on Cmaj-Amin transpositions of the dataset.
+    The input pieces are transposed back and forth to be harmonized.
+    Upload a melody plus chord constraints MIDI or musicXML file.
+
+    MIDI file: should inlude a first part with the melody and an optional second part
+    with the chord constraints.
+
+    musicXML file: should include a single part with the melody and optional chord symbols
+    with the chord constraints.
+    '''
+    # Save uploaded file
+    file_id = str(uuid.uuid4())
+    input_path = os.path.join(UPLOAD_DIR, f"{file_id}_{file.filename}")
+    with open(input_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # Process the file
+    # output_path = process_file(input_path)
+    mxl_folder = DOWNLOAD_DIR + 'base2/musicXML/'
+    midi_folder = DOWNLOAD_DIR + 'base2/MIDI/'
+    if file.filename.endswith('.mid') or file.filename.endswith('.midi'):
+        output_path = midi_folder + 'gen_' + f"{file_id}_{file.filename}"
+    elif file.filename.endswith('.xml') or file.filename.endswith('.mxl') or file.filename.endswith('.musicxml'):
+        output_path = mxl_folder + 'gen_' + f"{file_id}_{file.filename}"
+    else:
+        print('ERROR: unknow file extension: ', file.filename)
+    os.makedirs(mxl_folder, exist_ok=True)
+    os.makedirs(midi_folder, exist_ok=True)
+
+    _, _, _, _ = generate_files_with_base2(
+        model=model_CA_base2,
+        tokenizer=tokenizer,
+        input_f=input_path,
+        mxl_folder=mxl_folder,
+        midi_folder=midi_folder,
+        name_suffix=f"{file_id}_{os.path.splitext(file.filename)[0]}",
+        use_constraints=True,
+        normalize_tonality=True
+    )
+    print(input_path)
+    print(output_path)
+
+    # Return processed file as a downloadable response
+    return FileResponse(output_path, filename=os.path.basename(output_path), media_type='application/octet-stream')
+# end base2_CA_harmonization
+
+@app.post("/random_CA_harmonization")
+async def random_CA_harmonization(file: UploadFile = File(..., description='MIDI or musicXML')):
+    '''
+    Melodic harmonization using the midpoint doubling method,
+    trained on Cmaj-Amin transpositions of the dataset.
+    The input pieces are transposed back and forth to be harmonized.
+    Upload a melody plus chord constraints MIDI or musicXML file.
+
+    MIDI file: should inlude a first part with the melody and an optional second part
+    with the chord constraints.
+
+    musicXML file: should include a single part with the melody and optional chord symbols
+    with the chord constraints.
+    '''
+    # Save uploaded file
+    file_id = str(uuid.uuid4())
+    input_path = os.path.join(UPLOAD_DIR, f"{file_id}_{file.filename}")
+    with open(input_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # Process the file
+    # output_path = process_file(input_path)
+    mxl_folder = DOWNLOAD_DIR + 'random/musicXML/'
+    midi_folder = DOWNLOAD_DIR + 'random/MIDI/'
+    if file.filename.endswith('.mid') or file.filename.endswith('.midi'):
+        output_path = midi_folder + 'gen_' + f"{file_id}_{file.filename}"
+    elif file.filename.endswith('.xml') or file.filename.endswith('.mxl') or file.filename.endswith('.musicxml'):
+        output_path = mxl_folder + 'gen_' + f"{file_id}_{file.filename}"
+    else:
+        print('ERROR: unknow file extension: ', file.filename)
+    os.makedirs(mxl_folder, exist_ok=True)
+    os.makedirs(midi_folder, exist_ok=True)
+
+    _, _, _, _ = generate_files_with_random(
+        model=model_CA_random,
+        tokenizer=tokenizer,
+        input_f=input_path,
+        mxl_folder=mxl_folder,
+        midi_folder=midi_folder,
+        name_suffix=f"{file_id}_{os.path.splitext(file.filename)[0]}",
+        use_constraints=True,
+        normalize_tonality=True
+    )
+    print(input_path)
+    print(output_path)
+
+    # Return processed file as a downloadable response
+    return FileResponse(output_path, filename=os.path.basename(output_path), media_type='application/octet-stream')
+# end random_CA_harmonization
