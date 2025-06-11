@@ -496,7 +496,7 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
     def encode_MIDI(
             self,
             file_path,
-            trim_start=False,
+            trim_start=True,
             filler_token='<nc>',
             keep_durations=False,
             normalize_tonality=False
