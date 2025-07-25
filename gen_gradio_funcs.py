@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
-from train_utils import apply_structured_masking
-from music21 import harmony, stream, metadata, chord, note, key, meter, tempo, clef
+
+from music21 import duration, stream, metadata, chord, note, key, meter, tempo, clef
 import mir_eval
 import numpy as np
 import music21 as m21

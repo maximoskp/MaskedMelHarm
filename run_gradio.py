@@ -2,15 +2,13 @@ import gradio as gr
 import music21 as m21
 import tempfile, base64, html, textwrap, os, uuid, shutil
 
-import torch
-from models import GridMLMMelHarm                    # ← your model class
 from GridMLM_tokenizers import CSGridMLMTokenizer
 from gen_gradio_funcs import (
     generate_files_with_base2,
     generate_files_with_random,
     load_model    
 )
-from local_gradio_funcs import make_srcdoc, score_to_srcdoc, render_original
+from local_gradio_funcs import make_srcdoc, render_original
 
 # ------------------------------------------------------------------
 # 1)  Load tokenizer & models 
