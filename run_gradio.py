@@ -8,7 +8,7 @@ from gen_gradio_funcs import (
     generate_files_with_random,
     load_model    
 )
-from local_gradio_funcs import make_srcdoc, render_original
+from local_gradio_funcs import make_srcdoc, render_original, load_example
 
 # ------------------------------------------------------------------
 # 1)  Load tokenizer & models 
@@ -115,6 +115,17 @@ with gr.Blocks(css=css) as demo:
                 inputs=file_in,
                 outputs=clear_btn
             )            
+            # load examples
+            example_dd = gr.Dropdown(
+                choices=sorted(os.listdir("example_inputs")),
+                label="Or load a built‑in example…",
+                value=None,
+            )
+            example_dd.change(
+                fn=load_example,
+                inputs=example_dd,
+                outputs=[file_in, orig_viewer, preproc_xml, clear_btn],
+            )
 
             gr.Markdown("### 2. Choose model")
             variant = gr.Dropdown(

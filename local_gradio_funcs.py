@@ -1,6 +1,7 @@
+import os
 import music21 as m21
 import tempfile, base64, html, textwrap
-from copy import deepcopy
+import gradio as gr
 
 
 def make_srcdoc(xml_str: str, midi_b64: str) -> str:
@@ -314,3 +315,16 @@ def expand_clean_split_noRepeats(score, max_bars=16):
         out = out.measures(1, max_bars)
     return out
 
+
+
+def load_example(fname):
+    path = os.path.join("example_inputs", fname)
+    # render_original returns (iframe_html, preproc_xml_path)
+    iframe_html, preproc_xml_path = render_original(path)
+    # return values for [file_in, orig_viewer, preproc_xml, clear_btn]
+    return (
+        path,                        # set the File widget
+        iframe_html,                 
+        preproc_xml_path,            
+        gr.update(visible=True)      # show the “Clear” button
+    )
