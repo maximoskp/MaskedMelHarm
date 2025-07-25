@@ -319,7 +319,7 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         ):
         file_ext = file_path.split('.')[-1]
         if file_ext in ['xml', 'mxl', 'musicxml']:
-            return self.encode_musicXML(
+            return self.encode_MIDI(  #changed from encode_musicXML
                 file_path,
                 trim_start=trim_start,
                 filler_token=filler_token,

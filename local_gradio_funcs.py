@@ -1,5 +1,6 @@
 import music21 as m21
 import tempfile, base64, html, textwrap
+from copy import deepcopy
 
 
 def make_srcdoc(xml_str: str, midi_b64: str) -> str:
@@ -51,7 +52,10 @@ document.addEventListener("DOMContentLoaded", () => {{
   verovio.module.onRuntimeInitialized = async () => {{
     /* -------- render notation -------- */
     const vrv = new verovio.toolkit();
-    vrv.setOptions({{ scale:50, adjustPageHeight:true }});
+    vrv.setOptions({{ 
+      scale:50, 
+      adjustPageHeight:true                        
+    }});
     vrv.loadData(atob("{xml_b64}"));
     vrv.renderToMIDI({{breaks:"none"}});
     document.getElementById("score").innerHTML = vrv.renderToSVG(1);
@@ -174,8 +178,10 @@ def render_original(file_path: str):
     # guard against “clear” clicks on the File widget
     if not file_path:
         # returning an empty string clears the HTML preview
-      return ""
+      return "", None
     score = m21.converter.parse(file_path)
+    # preprocessing function
+    score = expand_clean_split_noRepeats(score)
     
     # export a plain-text MusicXML + a MIDI
     xml_tmp  = tempfile.NamedTemporaryFile(suffix=".musicxml", delete=False).name
@@ -188,4 +194,123 @@ def render_original(file_path: str):
     with open(midi_tmp, "rb") as f:
         midi_b64 = base64.b64encode(f.read()).decode()
 
-    return make_srcdoc(xml_str, midi_b64)
+    iframe = make_srcdoc(xml_str, midi_b64)
+
+    # **return** both the HTML *and* the xml_tmp path
+    return iframe, xml_tmp
+
+
+def stripRepeatsAndVoltas(score):
+    """
+    1) Remove any Volta spanners (first/second‐ending brackets)
+    2) Remove any music21.bar.Repeat objects (start/end repeat signs)
+    """
+    parts = score.parts if hasattr(score, 'parts') else [score]
+    for p in parts:
+        # 1) delete all volta spanners
+        for v in p.recurse().getElementsByClass('Volta'):
+            m = v.getContextByClass(m21.stream.Measure)
+            if m: m.remove(v)
+        # 2) delete all Repeat barlines
+        for r in p.recurse().getElementsByClass(m21.bar.Repeat):
+            m = r.getContextByClass(m21.stream.Measure)
+            if m: m.remove(r)
+    return score
+
+def expand_clean_split_noRepeats(score, max_bars=16):
+    """
+    1) Strip repeats/voltas
+    2) Clean redundant clef/time/key
+    3) Extract ChordSymbol → real Chord()
+    4) Wrap chords in measures, build two‐staff Score
+    """
+    # 1) strip repeats so music plays only once
+    noRep = stripRepeatsAndVoltas(score)
+
+    # 2) clean only *redundant* clefs / time‐sigs / key‐sigs
+    for p in noRep.parts:
+        lastC = lastT = lastK = None
+        for m in p.getElementsByClass(m21.stream.Measure):
+            # clefs
+            for c in list(m.getElementsByClass(m21.clef.Clef)):
+                sig = (c.__class__, c.sign, c.line,
+                       getattr(c, 'octaveChange', 0))
+                if sig == lastC:
+                    m.remove(c)
+                else:
+                    lastC = sig
+            # time signatures
+            for ts in list(m.getElementsByClass(m21.meter.TimeSignature)):
+                if ts.ratioString == lastT:
+                    m.remove(ts)
+                else:
+                    lastT = ts.ratioString
+            # key signatures
+            for ks in list(m.getElementsByClass(m21.key.KeySignature)):
+                if ks.sharps == lastK:
+                    m.remove(ks)
+                else:
+                    lastK = ks.sharps
+
+    # 3) pull out ChordSymbols and build a chord‐staff
+    melody = noRep.parts[0]
+    symbols = list(melody.recurse().getElementsByClass(m21.harmony.ChordSymbol))
+    if not symbols:
+        # no lead‐sheet symbols → just return the cleaned, no‐repeat stream
+        return noRep
+
+    chordPart = m21.stream.Part(id='Chords')
+    # carry over opening clef/time/key so measures align
+    for x in melody.measure(1).getElementsByClass((m21.clef.Clef,
+                                                   m21.meter.TimeSignature,
+                                                   m21.key.KeySignature)):
+        chordPart.insert(0, x)
+
+    for m in melody.getElementsByClass(m21.stream.Measure):
+        syms = sorted(m.getElementsByClass(m21.harmony.ChordSymbol),
+                      key=lambda cs: cs.offset)
+        if not syms:
+            continue
+
+        barQL   = m.barDuration.quarterLength
+        mAbsOff = m.offset
+        for idx, cs in enumerate(syms):
+            startRel = cs.offset
+            endRel   = syms[idx+1].offset if idx+1 < len(syms) else barQL
+            durQL    = endRel - startRel
+            absOff   = mAbsOff + startRel
+
+            # build the real chord
+            realC = m21.chord.Chord(cs.pitches)
+            # assign a fully‐typed Duration
+            d = m21.duration.Duration(durQL)
+            baseMap = {
+                4.0: 'whole', 2.0: 'half',
+                1.0: 'quarter', 0.5: 'eighth',
+                0.25:'16th', 0.125:'32nd'
+            }
+            for dots in (0,1,2):
+                unit = durQL / (2**dots)
+                if unit in baseMap:
+                    d.type = baseMap[unit]
+                    d.dots = dots
+                    break
+            realC.duration = d
+
+            # yank the symbol and insert the chord
+            m.remove(cs)
+            chordPart.insert(absOff, realC)
+
+    # 4) wrap chordPart in measures
+    chordPart = chordPart.makeMeasures(inPlace=False)
+
+    # assemble final two‐staff score: melody above, chords below
+    out = m21.stream.Score()
+    out.insert(0, melody)
+    out.insert(0, chordPart)
+
+    # 5) if requested, keep only bars 1 → max_bars
+    if max_bars is not None:
+        out = out.measures(1, max_bars)
+    return out
+

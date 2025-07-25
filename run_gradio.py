@@ -59,6 +59,7 @@ def harmonise(file_path: str,
         normalize_tonality = need_norm,
     )
 
+
     # paths returned for download buttons (keep the .mxl/.mid MuseScore likes)
     mxl_path  = os.path.join(mxl_dir,  f"gen_{name_sfx}.mxl")
     midi_path = os.path.join(mid_dir,  f"gen_{name_sfx}.mid")
@@ -98,16 +99,18 @@ with gr.Blocks(css=css) as demo:
 
             file_in      = gr.File(type="filepath", label="MIDI or MusicXML")
             orig_viewer  = gr.HTML()                 # preview of the melody
+            # hidden state to hold the preprocessed MusicXML path
+            preproc_xml = gr.State()  
             # new “Clear” button
             clear_btn = gr.Button("Clear Input", variant="secondary", visible=False)
             # when clicked, wipe both the file input and the preview
             clear_btn.click(
-                fn=lambda: (None, "", gr.update(visible=False)), 
+                fn=lambda: (None, "", None, gr.update(visible=False)), 
                 inputs=None, 
-                outputs=[file_in, orig_viewer, clear_btn]
+                outputs=[file_in, orig_viewer, preproc_xml, clear_btn]
             )            
 
-            file_in.change(render_original,   inputs=file_in, outputs=orig_viewer)
+            file_in.change(render_original,   inputs=file_in, outputs=[orig_viewer, preproc_xml])
             # whenever file_in changes, show the clear button if there's a path
             file_in.change(
                 fn=lambda fp: gr.update(visible=bool(fp)),
@@ -134,7 +137,7 @@ with gr.Blocks(css=css) as demo:
     # wiring
     run_btn.click(
         fn=harmonise,
-        inputs=[file_in, variant, constraints],
+        inputs=[preproc_xml, variant, constraints],
         outputs=[gen_viewer, mxl_out, mid_out],
     )
 

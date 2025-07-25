@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from train_utils import apply_structured_masking
-from music21 import harmony, stream, metadata, chord, note, key, meter, tempo, duration
+from music21 import harmony, stream, metadata, chord, note, key, meter, tempo, clef
 import mir_eval
 import numpy as np
 import music21 as m21
@@ -191,135 +191,103 @@ def structured_progressive_generate(
     return visible_harmony
 # end structured_progressive_generate
 
+
 def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_steps):
-    # create a part for chords in midi format
-    # melody_part = melody_part.makeMeasures()
-    # chords_part = deepcopy(melody_part)
-    # Create deep copy of flat melody part
-    # Create a new part for filtered content
-    filtered_part = stream.Part()
-    filtered_part.id = melody_part.id  # Preserve ID
+    """
+    Build a two‐part Score:
+      • melody_measures: your original melody, in measures
+      • chords_part:   identical bar structure but empty, into which we
+                      insert one chord per bar (no ties)
+    """
 
-    # Copy key and time signatures from the original part
-    for el in melody_part.recurse().getElementsByClass((key.KeySignature, meter.TimeSignature,  tempo.MetronomeMark)):
-        if el.offset < 64:
-            filtered_part.insert(el.offset, el)
+    # 1) Make your melody into a measured stream
+    melody_measures = melody_part.makeMeasures(inPlace=False)
 
-    # Copy notes and rests with offset < 64
-    for el in melody_part.flatten().notesAndRests:
-        if el.offset < 64:
-            filtered_part.insert(el.offset, el)
-    # clear conflicting rests with notes of the same offset
-    filtered_part = remove_conflicting_rests(filtered_part)
-
-    # Replace the original part with the filtered one
-    melody_part = filtered_part
-    
-    # Remove old chord symbols
-    for el in melody_part.recurse().getElementsByClass(harmony.ChordSymbol):
-        melody_part.remove(el)
-    
-    # Prepare for clamping durations — convert melody to measures
-    melody_measures = melody_part.makeMeasures()
-
+    # 2) Deep-copy that structure for harmony
     chords_part = deepcopy(melody_measures)
-    # Strip musical elements but retain structure
-    for measure in chords_part.getElementsByClass(stream.Measure):
-        for el in list(measure):
-            if isinstance(el, (note.Note, note.Rest, chord.Chord, harmony.ChordSymbol)):
-                measure.remove(el)
-        # Add a placeholder full-measure rest to preserve the measure
-        full_rest = note.Rest()
-        full_rest.quarterLength = measure.barDuration.quarterLength
-        measure.insert(0.0, full_rest)
+    chords_part.id = 'Harmonies'
 
-    # Track inserted chords
-    last_chord_symbol = None
-    inserted_chords = {}
-
-    for i, mir_chord in enumerate(generated_chords):
-        if mir_chord in ("<pad>", "<nc>"):
-            continue
-        if mir_chord == last_chord_symbol:
-            continue
-        
-        offset = (i + skip_steps) * ql_per_16th
-
-        # Decode mir_eval chord symbol to chord symbol object
-        try:
-            r, t, _ = mir_eval.chord.encode(mir_chord, reduce_extended_chords=True)
-            pcs = r + np.where(t > 0)[0] + 48
-            c = chord.Chord(pcs.tolist())
-            chord_symbol = harmony.chordSymbolFromChord(c)
-        except Exception as e:
-            print(f"Skipping invalid chord {mir_chord} at step {i}: {e}")
-            continue
-        
-        # Clamp duration so it doesn't overflow into next bar
-        bars = list(chords_part.getElementsByClass(stream.Measure))
-        for b in reversed(bars):
-            if b.offset <= offset:
-                bar = b
-                break
-        # bar = next((b for b in reversed(bars) if b.offset <= offset), None)
-
-        offset = (i + skip_steps) * ql_per_16th
-        
-        if bar:
-            bar_start = bar.offset
-            bar_end = bar_start + bar.barDuration.quarterLength
-            max_duration = bar_end - offset
-            c.quarterLength = min(c.quarterLength, max_duration)
-            # chord_symbol.quarterLength = min(c.quarterLength, max_duration)
-        # chords_part.insert(offset, c)
-        # Remove any placeholder rests at 0.0
-        for el in bar.getElementsByOffset(0.0):
-            if isinstance(el, note.Rest):
-                bar.remove(el)
-        bar.insert(offset - bar_start, c)
-        # harmonized_part.insert(offset, chord_symbol)
-        inserted_chords[i] = chord_symbol
-        last_chord_symbol = mir_chord
-
-    # Repeat previous chord at start of bars with no chord
+    # 2a) Strip out _all_ notes/chords from the copy, leaving only bars & sigs
     for m in chords_part.getElementsByClass(stream.Measure):
-        bar_offset = m.offset
-        bar_duration = m.barDuration.quarterLength
-        # has_chord = any(isinstance(el, chord.Chord) and el.offset == bar_offset for el in m)
-        # has_chord = any( isinstance(el, chord.Chord) for el in m )
-        has_chord = any(isinstance(el, chord.Chord) and el.offset == 0. for el in m)
-        if not has_chord:
-            # Find previous chord before this measure
-            prev_chords = []
-            for curr_bar in chords_part.recurse().getElementsByClass(stream.Measure):
-                for el in curr_bar.recurse().getElementsByClass(chord.Chord):
-                        if curr_bar.offset + el.offset < bar_offset:
-                            prev_chords.append(el)
-            if prev_chords:
-                # Remove any placeholder rests at 0.0
-                for el in m.getElementsByOffset(0.0):
-                    if isinstance(el, note.Rest):
-                        m.remove(el)
-                prev_chord = prev_chords[-1]
-                m.insert(0.0, deepcopy(prev_chord))
-        else:
-            # Remove any placeholder rests at 0.0
-            for el in m.getElementsByOffset(0.0):
-                if isinstance(el, note.Rest):
-                    m.remove(el)
-            # modify duration so that it doesn't affect the next bar
-            for el in m.notes:
-                if isinstance(el, chord.Chord):
-                    max_duration = bar_duration - el.offset
-                    if el.quarterLength > max_duration:
-                        el.quarterLength = max_duration
+        for el in list(m):
+            if not isinstance(el, (key.KeySignature,
+                                   meter.TimeSignature,
+                                   tempo.MetronomeMark,
+                                   clef.Clef            # <-- keep any clef
+                                   )):
+                m.remove(el)
 
-    # Create final score with chords and melody
+    # 2b) Copy initial Key/Time/Tempo markings into chords_part
+    for el in melody_measures.recurse().getElementsByClass((key.KeySignature,
+                                                            meter.TimeSignature,
+                                                            tempo.MetronomeMark,
+                                                            clef.Clef)):
+        if el.offset == 0:
+            chords_part.insert(0, el)
+
+    # 3) Recompute offsets on melody_measures
+    cumulative = 0.0
+    measures_m = list(melody_measures.getElementsByClass(stream.Measure))
+    for m in measures_m:
+        m.offset = cumulative
+        cumulative += m.barDuration.quarterLength
+
+    #  ─── Build a [start,end,measure] list, but grab the measure _from_ chords_part ───
+    measures_c = list(chords_part.getElementsByClass(stream.Measure))
+    measure_boundaries = []
+    for m_m, m_c in zip(measures_m, measures_c):
+        start = m_m.offset
+        end   = start + m_m.barDuration.quarterLength
+        measure_boundaries.append((start, end, m_c))
+
+    # 4) Walk through generated_chords, group repeats, and insert one chord‐per‐bar
+    step = 0
+    N    = len(generated_chords)
+    while step < N:
+        token = generated_chords[step]
+        # skip <pad> and <nc>
+        if token in ('<pad>','<nc>'):
+            step += 1
+            continue
+
+        # find run of the same token
+        start = step
+        while step < N and generated_chords[step] == token:
+            step += 1
+        end = step
+
+        region_start = (start + skip_steps) * ql_per_16th
+        region_end   = (end   + skip_steps) * ql_per_16th
+
+        # insert into every bar that overlaps this region
+        for bar_start, bar_end, measure in measure_boundaries:
+            if bar_end <= region_start or bar_start >= region_end:
+                continue
+
+            seg_start  = max(region_start, bar_start)
+            seg_end    = min(region_end,   bar_end)
+            seg_dur    = seg_end - seg_start
+            seg_offset = seg_start - bar_start
+
+            # decode chord symbol → Chord object
+            try:
+                r, t, _ = mir_eval.chord.encode(token,
+                                                reduce_extended_chords=True)
+                pcs = r + np.where(t > 0)[0] + 48
+                c   = chord.Chord(pcs.tolist())
+            except Exception as e:
+                print(f"Skipping invalid chord {token}: {e}")
+                continue
+
+            c.quarterLength = seg_dur
+            measure.insert(seg_offset, c)
+
+    # 5) Assemble final Score
     score = stream.Score()
     score.insert(0, melody_measures)
     score.insert(0, chords_part)
-
     return score
+
 # end overlay_generated_harmony
 
 def save_harmonized_score(score, title="Harmonized Piece", out_path="harmonized.xml"):
@@ -426,6 +394,7 @@ def generate_files_with_base2(
         input_encoded['ql_per_quantum'],
         input_encoded['skip_steps']
     )
+
     if normalize_tonality:
         gen_score = transpose_score(gen_score, input_encoded['back_interval'])
     # add piano sound
@@ -433,7 +402,9 @@ def generate_files_with_base2(
     mxl_file_name = os.path.join(mxl_folder,  f'gen_{name_suffix}.mxl')
     midi_file_name = os.path.join(midi_folder, f'gen_{name_suffix}.mid')
     save_harmonized_score(gen_score, out_path=mxl_file_name)
-    os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
+    # os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
+    gen_score.write("midi", fp=midi_file_name)
+
 
     real_score = overlay_generated_harmony(
         input_encoded['melody_part'],
@@ -448,7 +419,9 @@ def generate_files_with_base2(
     mxl_file_name = os.path.join(mxl_folder,  f'real_{name_suffix}.mxl')
     midi_file_name = os.path.join(midi_folder, f'real_{name_suffix}.mid')
     save_harmonized_score(real_score, out_path=mxl_file_name)
-    os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
+    #os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
+    real_score.write("midi", fp=midi_file_name)
+
 
     return gen_output_tokens, harmony_real_tokens, gen_score, real_score
 # end generate_files_with_base2
@@ -506,7 +479,8 @@ def generate_files_with_random(
     mxl_file_name = os.path.join(mxl_folder,  f'gen_{name_suffix}.mxl')
     midi_file_name = os.path.join(midi_folder, f'gen_{name_suffix}.mid')
     save_harmonized_score(gen_score, out_path=mxl_file_name)
-    os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
+    # os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
+    gen_score.write("midi", fp=midi_file_name)
 
     real_score = overlay_generated_harmony(
         input_encoded['melody_part'],
@@ -521,7 +495,8 @@ def generate_files_with_random(
     mxl_file_name = os.path.join(mxl_folder,  f'real_{name_suffix}.mxl')
     midi_file_name = os.path.join(midi_folder, f'real_{name_suffix}.mid')
     save_harmonized_score(real_score, out_path=mxl_file_name)
-    os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
+    # os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
+    real_score.write("midi", fp=midi_file_name)
 
     return gen_output_tokens, harmony_real_tokens, gen_score, real_score
 # end generate_files_with_random
