@@ -314,7 +314,7 @@ def train_with_curriculum(
             for batch in tepoch:
                 perplexity_metric.reset()
                 model.train()
-                melody_grid = batch["pianoroll"].to(device)           # (B, 256, 140)
+                melody_grid = batch["pianoroll"].to(device)           # (B, 256, 100)
                 harmony_gt = batch["input_ids"].to(device)         # (B, 256)
                 conditioning_vec = batch["time_signature"].to(device)  # (B, C0)
                 

@@ -1,5 +1,5 @@
 from data_utils import CSGridMLMDataset, CSGridMLM_collate_fn
-from GridMLM_tokenizers import CSGridMLMTokenizerNoPCs
+from GridMLM_tokenizers import CSGridMLMTokenizer
 import os
 import numpy as np
 from torch.utils.data import DataLoader
@@ -49,10 +49,10 @@ def main():
     if args.batchsize:
         batchsize = args.batchsize
 
-    tokenizer = CSGridMLMTokenizerNoPCs(fixed_length=256)
+    tokenizer = CSGridMLMTokenizer(fixed_length=256, use_pc_roll=False)
 
-    train_dataset = CSGridMLMDataset(train_dir, tokenizer, 512)
-    val_dataset = CSGridMLMDataset(val_dir, tokenizer, 512)
+    train_dataset = CSGridMLMDataset(train_dir, tokenizer, 512, name_suffix='MLMH_noPCs')
+    val_dataset = CSGridMLMDataset(val_dir, tokenizer, 512, name_suffix='MLMH_noPCs')
 
     trainloader = DataLoader(train_dataset, batch_size=batchsize, shuffle=True, collate_fn=CSGridMLM_collate_fn)
     valloader = DataLoader(val_dataset, batch_size=batchsize, shuffle=False, collate_fn=CSGridMLM_collate_fn)

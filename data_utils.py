@@ -6,6 +6,7 @@ import numpy as np
 from music21 import converter, note, chord, harmony, meter, stream
 import torch.nn.functional as F
 from tqdm import tqdm
+import pickle
 
 def extract_lead_sheet_info(xml_path, quantization='16th', fixed_length=None):
     # Load the score and flatten
@@ -147,7 +148,15 @@ def compute_normalized_token_entropy(logits, target_ids, pad_token_id=None):
 # end compute_token_entropy
 
 class CSGridMLMDataset(Dataset):
-    def __init__(self, root_dir, tokenizer, fixed_length=512, frontloading=True):
+    def __init__(
+        self,
+        root_dir,
+        tokenizer,
+        fixed_length=512,
+        frontloading=True,
+        refrontload=False,
+        name_suffix='MLMH'
+    ):
         self.data_files = []
         for dirpath, _, filenames in os.walk(root_dir):
             for file in filenames:
@@ -159,13 +168,25 @@ class CSGridMLMDataset(Dataset):
         self.fixed_length = fixed_length
         self.frontloading = frontloading
         if self.frontloading:
-            print('Frontloading data.')
-            self.encoded = []
-            for data_file in tqdm(self.data_files):
-                try:
-                    self.encoded.append( self.tokenizer.encode( data_file ) )
-                except:
-                    print('Problem in:', data_file)
+            # check if file exists and load it
+            root_dir = root_dir[:-1] if root_dir[-1] == '/' else root_dir
+            frontloaded_file = root_dir + '_' + name_suffix + '_' + '.pickle'
+            if refrontload or not os.path.isfile(frontloaded_file):
+                print('Frontloading data.')
+                self.encoded = []
+                for data_file in tqdm(self.data_files):
+                    try:
+                        self.encoded.append( self.tokenizer.encode( data_file ) )
+                    except Exception as e: 
+                        print('Problem in:', data_file)
+                        print(e)
+                if frontloaded_file is not None:
+                    with open(frontloaded_file, 'wb') as f:
+                        pickle.dump(self.encoded, f)
+            else:
+                print('Loading data file.')
+                with open(frontloaded_file, 'rb') as f:
+                    self.encoded = pickle.load(f)
     # end init
 
     def __len__(self):

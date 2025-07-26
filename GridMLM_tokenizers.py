@@ -461,7 +461,6 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
             full_pianoroll = np.hstack([pitch_classes, raw_pianoroll])  # Shape: (T, 12 + 88)
         else:
             full_pianoroll = raw_pianoroll  # Shape: (T, 88)
-
         # Apply fixed length (pad or trim)
         if self.fixed_length is not None:
             if n_steps >= self.fixed_length:
