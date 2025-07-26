@@ -136,7 +136,7 @@ def structured_progressive_generate(
     if chord_constraints is not None:
         idxs  = torch.logical_and( chord_constraints != nc_token_id , chord_constraints != pad_token_id )
         visible_harmony[ idxs ] = chord_constraints[idxs]
-
+    
     # Find the last index in melody_grid that contains a non-zero value
     if force_fill:
         active = (melody_grid != 0).any(dim=-1).squeeze(0)  # shape: (seq_len,)

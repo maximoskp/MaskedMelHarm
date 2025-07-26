@@ -3,10 +3,12 @@
 # List of Python scripts with their respective arguments
 
 scripts=(
-    "train_gmlm.py -c random -f CA -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 0 -e 50 -l 1e-4 -b 20"
-    "train_gmlm.py -c base2 -f CA -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 0 -e 50 -l 1e-4 -b 20"
-    "train_gmlm_no_pcs.py -c base2 -f CA -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 1 -e 50 -l 1e-4 -b 20"
-    "train_gmlm_no_stage.py -c base2 -f CA -d /media/maindisk/maximos/data/hooktheory_train -v /media/maindisk/maximos/data/hooktheory_test -g 1 -e 50 -l 1e-4 -b 20"
+    "train_gmlm.py -c random -f CA -d /media/maindisk/tsamis/data/hooktheory_dataset/key_train -v /media/maindisk/tsamis/data/hooktheory_dataset/key_test -g 0 -e 50 -l 1e-4 -b 20"
+    "train_gmlm.py -c base2 -f CA -d /media/maindisk/tsamis/data/hooktheory_dataset/key_train -v /media/maindisk/tsamis/data/hooktheory_dataset/key_test -g 0 -e 50 -l 1e-4 -b 20"
+    "train_gmlm_no_pcs.py -c base2 -f CA -d /media/maindisk/tsamis/data/hooktheory_dataset/key_train -v /media/maindisk/tsamis/data/hooktheory_dataset/key_test -g 1 -e 50 -l 1e-4 -b 20"
+    "train_gmlm_no_stage.py -c base2 -f CA -d /media/maindisk/tsamis/data/hooktheory_dataset/key_train -v /media/maindisk/tsamis/data/hooktheory_dataset/key_test -g 1 -e 50 -l 1e-4 -b 20"
+    "train_gmlm_no_pcs.py -c random -f CA -d /media/maindisk/tsamis/data/hooktheory_dataset/key_train -v /media/maindisk/tsamis/data/hooktheory_dataset/key_test -g 2 -e 50 -l 1e-4 -b 20"
+    "train_gmlm_no_stage.py -c random -f CA -d /media/maindisk/tsamis/data/hooktheory_dataset/key_train -v /media/maindisk/tsamis/data/hooktheory_dataset/key_test -g 2 -e 50 -l 1e-4 -b 20"
 )
 
 # scripts=(
