@@ -65,7 +65,10 @@ def random_progressive_generate(
     # Find the last index in melody_grid that contains a non-zero value
     if force_fill:
         active = (melody_grid != 0).any(dim=-1).squeeze(0)  # shape: (seq_len,)
-        last_active_index = active.nonzero(as_tuple=True)[0].max().item()
+        try:
+            last_active_index = active.nonzero(as_tuple=True)[0].max().item()
+        except:
+            last_active_index = -1
     else:
         last_active_index = -1  # Don't clamp anything if not forced
     for stage in range(num_stages):
@@ -332,7 +335,14 @@ def save_harmonized_score(score, title="Harmonized Piece", out_path="harmonized.
         print('uknown file format for file: ', out_path)
 # end save_harmonized_score
 
-def load_model(curriculum_type='random', subfolder=None, device_name='cuda:0', tokenizer=None, pianoroll_dim=100):
+def load_model(
+    curriculum_type='random',
+    subfolder=None,
+    device_name='cuda:0',
+    tokenizer=None,
+    pianoroll_dim=100,
+    total_stages=10
+):
     if device_name == 'cpu':
         device = torch.device('cpu')
     else:
@@ -345,8 +355,12 @@ def load_model(curriculum_type='random', subfolder=None, device_name='cuda:0', t
         chord_vocab_size=len(tokenizer.vocab),
         device=device,
         pianoroll_dim=pianoroll_dim,
+        total_stages=total_stages
     )
-    model_path = 'saved_models/' + subfolder + '/' + curriculum_type +  '.pt'
+    if curriculum_type = 'random':
+        model_path = 'saved_models/' + subfolder + '/' + curriculum_type + str(total_stages) +  '.pt'
+    else:
+        model_path = 'saved_models/' + subfolder + '/' + curriculum_type +  '.pt'
     # checkpoint = torch.load(model_path, map_location=device_name, weights_only=True)
     checkpoint = torch.load(model_path, map_location=device_name)
     model.load_state_dict(checkpoint)
@@ -355,7 +369,13 @@ def load_model(curriculum_type='random', subfolder=None, device_name='cuda:0', t
     return model
 # end load_model
 
-def load_model_no_stage(curriculum_type='base2', subfolder='CA', device_name='cuda:0', tokenizer=None):
+def load_model_no_stage(
+    curriculum_type='random',
+    subfolder='CA',
+    device_name='cuda:0',
+    tokenizer=None,
+    total_stages=10
+):
     if device_name == 'cpu':
         device = torch.device('cpu')
     else:
@@ -366,9 +386,13 @@ def load_model_no_stage(curriculum_type='base2', subfolder='CA', device_name='cu
             device = torch.device('cpu')
     model = GridMLMMelHarmNoStage(
         chord_vocab_size=len(tokenizer.vocab),
-        device=device
+        device=device,
+        total_stages
     )
-    model_path = 'saved_models/' + subfolder + '/no_stage/' + curriculum_type +  '.pt'
+    if curriculum_type == 'random':
+        model_path = 'saved_models/' + subfolder + '/no_stage/' + curriculum_type + str(total_stages) +  '.pt'
+    else:
+        model_path = 'saved_models/' + subfolder + '/no_stage/' + curriculum_type + '.pt'
     # checkpoint = torch.load(model_path, map_location=device_name, weights_only=True)
     checkpoint = torch.load(model_path, map_location=device_name)
     model.load_state_dict(checkpoint)

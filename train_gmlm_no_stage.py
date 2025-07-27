@@ -19,6 +19,7 @@ def main():
 
     # Define arguments
     parser.add_argument('-c', '--curriculum', type=str, help='Specify the curriculum type name among: ' + repr(curriculum_types), required=True)
+    parser.add_argument('-s', '--total_stages', type=int, help='Specify number of stages, applicable to random only.', required=False)
     parser.add_argument('-f', '--subfolder', type=str, help='Specify subfolder to save the model and results.', required=False)
     parser.add_argument('-d', '--datatrain', type=str, help='Specify the full path to the root folder of the training xml/mxl files', required=True)
     parser.add_argument('-v', '--dataval', type=str, help='Specify the full path to the root folder of the validation xml/mxl files', required=True)
@@ -30,6 +31,9 @@ def main():
     # Parse the arguments
     args = parser.parse_args()
     curriculum_type = args.curriculum
+    total_stages = 10
+    if args.total_stages and curriculum_type == 'random':
+        total_stages = args.total_stages
     subfolder = ''
     if args.subfolder:
         subfolder = args.subfolder
@@ -69,6 +73,7 @@ def main():
     model = GridMLMMelHarmNoStage(
         chord_vocab_size=len(tokenizer.vocab),
         device=device,
+        max_stages=total_stages
     )
     model.to(device)
     optimizer = AdamW(model.parameters(), lr=lr)
@@ -76,12 +81,18 @@ def main():
     # save results
     os.makedirs('results/' + subfolder, exist_ok=True)
     os.makedirs('results/' + subfolder + '/no_stage/', exist_ok=True)
-    results_path = 'results/' + subfolder + '/no_stage/' + curriculum_type + '.csv'
+    if curriculum_type == 'random':
+        results_path = 'results/' + subfolder + '/no_stage/' + curriculum_type + str(total_stages) + '.csv'
+    else:
+        results_path = 'results/' + subfolder + '/no_stage/' + curriculum_type + '.csv'
     
     os.makedirs('saved_models/' + subfolder, exist_ok=True)
     os.makedirs('saved_models/'+ subfolder +'/no_stage/', exist_ok=True)
     save_dir = 'saved_models/'+ subfolder +'/no_stage/'
-    transformer_path = save_dir + curriculum_type + '.pt'
+    if curriculum_type == 'random':
+        transformer_path = save_dir + curriculum_type + str(total_stages) + '.pt'
+    else:
+        transformer_path = save_dir + curriculum_type + '.pt'
 
     train_with_curriculum(
         model, optimizer, trainloader, valloader, loss_fn, tokenizer.mask_token_id,

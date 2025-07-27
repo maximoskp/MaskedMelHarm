@@ -273,6 +273,7 @@ def train_with_curriculum(
     model, optimizer, trainloader, valloader, loss_fn, mask_token_id,
     epochs=100,
     curriculum_type='random',  # 'random', 'base2'
+    total_stages=10,
     results_path=None,
     transformer_path=None,
 ):
@@ -322,7 +323,7 @@ def train_with_curriculum(
                 harmony_input, harmony_target, stage_indices = apply_masking(
                     harmony_gt,
                     mask_token_id,
-                    total_stages=10,
+                    total_stages=total_stages,
                     curriculum_type=curriculum_type
                 )
 
