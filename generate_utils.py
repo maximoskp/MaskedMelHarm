@@ -324,7 +324,12 @@ def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_s
 def save_harmonized_score(score, title="Harmonized Piece", out_path="harmonized.xml"):
     score.metadata = metadata.Metadata()
     score.metadata.title = title
-    score.write('musicxml', fp=out_path)
+    if out_path.endswith('.xml') or out_path.endswith('.mxl') or out_path.endswith('.musicxml'):
+        score.write('musicxml', fp=out_path)
+    elif out_path.endswith('.mid') or out_path.endswith('.midi'):
+        score.write('midi', fp=out_path)
+    else:
+        print('uknown file format for file: ', out_path)
 # end save_harmonized_score
 
 def load_model(curriculum_type='random', subfolder=None, device_name='cuda:0', tokenizer=None, pianoroll_dim=100):
