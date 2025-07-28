@@ -10,7 +10,7 @@ import numpy as np
 from baseline_models import BaselineModeller
 
 generate_primary = True
-generate_baseline = False
+generate_baseline = True
 generate_ablations = True
 
 # output folders
@@ -30,7 +30,7 @@ tokenizer_noPCs = CSGridMLMTokenizer(fixed_length=256, use_pc_roll=False)
 
 if generate_baseline:
     baseline_model_base_path = 'baseline_models/saved_models/'
-    bm = BaselineModeller(baseline_model_base_path, num_heads=8, data_dir = val_dir, device_name='cpu')
+    bm = BaselineModeller(baseline_model_base_path, num_heads=8, data_dir = val_dir, device_name='cuda:2')
 
 mask_token_id = tokenizer.mask_token_id
 pad_token_id = tokenizer.pad_token_id
@@ -58,16 +58,16 @@ random_indices = np.arange(num_files)
 
 # load models
 if generate_primary:
-    random10_model = load_model(curriculum_type='random', total_stages=10, subfolder='CA', device_name='cpu', tokenizer=tokenizer)
-    random20_model = load_model(curriculum_type='random', total_stages=20, subfolder='CA', device_name='cpu', tokenizer=tokenizer)
-    base2_model = load_model(curriculum_type='base2', subfolder='CA', device_name='cpu', tokenizer=tokenizer)
+    random10_model = load_model(curriculum_type='random', total_stages=10, subfolder='CA', device_name='cuda:2', tokenizer=tokenizer)
+    random20_model = load_model(curriculum_type='random', total_stages=20, subfolder='CA', device_name='cuda:2', tokenizer=tokenizer)
+    base2_model = load_model(curriculum_type='base2', subfolder='CA', device_name='cuda:2', tokenizer=tokenizer)
 if generate_ablations:
-    random10_no_stage_model = load_model_no_stage(curriculum_type='random', total_stages=10, subfolder='CA', device_name='cpu', tokenizer=tokenizer)
-    random10_noPCs_model = load_model(curriculum_type='random', total_stages=10, subfolder='CA/noPCs', device_name='cpu', tokenizer=tokenizer_noPCs, pianoroll_dim=88)
-    random20_no_stage_model = load_model_no_stage(curriculum_type='random', total_stages=20, subfolder='CA', device_name='cpu', tokenizer=tokenizer)
-    random20_noPCs_model = load_model(curriculum_type='random', total_stages=20, subfolder='CA/noPCs', device_name='cpu', tokenizer=tokenizer_noPCs, pianoroll_dim=88)
-    base2_no_stage_model = load_model_no_stage(curriculum_type='base2', subfolder='CA', device_name='cpu', tokenizer=tokenizer)
-    base2_noPCs_model = load_model(curriculum_type='base2', subfolder='CA/noPCs', device_name='cpu', tokenizer=tokenizer_noPCs, pianoroll_dim=88)
+    random10_no_stage_model = load_model_no_stage(curriculum_type='random', total_stages=10, subfolder='CA', device_name='cuda:2', tokenizer=tokenizer)
+    random10_noPCs_model = load_model(curriculum_type='random', total_stages=10, subfolder='CA/noPCs', device_name='cuda:2', tokenizer=tokenizer_noPCs, pianoroll_dim=88)
+    random20_no_stage_model = load_model_no_stage(curriculum_type='random', total_stages=20, subfolder='CA', device_name='cuda:2', tokenizer=tokenizer)
+    random20_noPCs_model = load_model(curriculum_type='random', total_stages=20, subfolder='CA/noPCs', device_name='cuda:2', tokenizer=tokenizer_noPCs, pianoroll_dim=88)
+    base2_no_stage_model = load_model_no_stage(curriculum_type='base2', subfolder='CA', device_name='cuda:2', tokenizer=tokenizer)
+    base2_noPCs_model = load_model(curriculum_type='base2', subfolder='CA/noPCs', device_name='cuda:2', tokenizer=tokenizer_noPCs, pianoroll_dim=88)
 
 for i,idx in enumerate(random_indices):
     print(f'{i+1}/{num_files} : {idx}{data_files[idx].replace(val_dir,'').replace('/','_')}')
@@ -83,7 +83,7 @@ for i,idx in enumerate(random_indices):
     if generate_primary:
         # generate with random model
         random10_generated_harmony = random_progressive_generate(
-            model=random_model,
+            model=random10_model,
             melody_grid=melody_grid,
             conditioning_vec=conditioning_vec,
             num_stages=10,
@@ -99,7 +99,7 @@ for i,idx in enumerate(random_indices):
             random10_output_tokens.append( tokenizer.ids_to_tokens[t] )
         # generate with random20 model
         random20_generated_harmony = random_progressive_generate(
-            model=random_model,
+            model=random20_model,
             melody_grid=melody_grid,
             conditioning_vec=conditioning_vec,
             num_stages=20,
@@ -134,11 +134,11 @@ for i,idx in enumerate(random_indices):
         for t in harmony_gt[0].tolist():
             harmony_gt_tokens.append( tokenizer.ids_to_tokens[t] )
         # make midi files
-        # random
+        # random10
         print(f'{i+1}/{num_files} : processing random10')
         score = overlay_generated_harmony(
             encoded['melody_part'],
-            random_output_tokens,
+            random10_output_tokens,
             encoded['ql_per_quantum'],
             encoded['skip_steps']
         )
@@ -155,7 +155,7 @@ for i,idx in enumerate(random_indices):
         )
         midi_file_name = midi_folder + f'{idx}_random20' + save_name_base + '.mid'
         save_harmonized_score(score, out_path=midi_file_name)
-
+        
         # base2
         print(f'{i+1}/{num_files} : processing base2')
         score = overlay_generated_harmony(

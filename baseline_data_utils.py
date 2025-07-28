@@ -58,7 +58,8 @@ class MergedMelHarmDataset(Dataset):
         self.data_files = []
         for dirpath, _, filenames in os.walk(root_dir):
             for file in filenames:
-                if file.endswith('.xml') or file.endswith('.mxl') or file.endswith('.musicxml'):
+                if file.endswith('.xml') or file.endswith('.mxl') or file.endswith('.musicxml') or \
+                    file.endswith('.mid') or file.endswith('.midi'):
                     full_path = os.path.join(dirpath, file)
                     self.data_files.append(full_path)
         self.merged_tokenizer = merged_tokenizer
@@ -119,7 +120,8 @@ class SeparatedMelHarmDataset(Dataset):
         self.data_files = []
         for dirpath, _, filenames in os.walk(root_dir):
             for file in filenames:
-                if file.endswith('.xml') or file.endswith('.mxl') or file.endswith('.musicxml'):
+                if file.endswith('.xml') or file.endswith('.mxl') or file.endswith('.musicxml') or \
+                    file.endswith('.mid') or file.endswith('.midi'):
                     full_path = os.path.join(dirpath, file)
                     self.data_files.append(full_path)
         self.merged_tokenizer = merged_tokenizer

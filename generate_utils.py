@@ -143,7 +143,10 @@ def structured_progressive_generate(
     # Find the last index in melody_grid that contains a non-zero value
     if force_fill:
         active = (melody_grid != 0).any(dim=-1).squeeze(0)  # shape: (seq_len,)
-        last_active_index = active.nonzero(as_tuple=True)[0].max().item()
+        try:
+            last_active_index = active.nonzero(as_tuple=True)[0].max().item()
+        except:
+            last_active_index = -1
     else:
         last_active_index = -1  # Don't clamp anything if not forced
     for stage in range(num_stages):
@@ -355,9 +358,9 @@ def load_model(
         chord_vocab_size=len(tokenizer.vocab),
         device=device,
         pianoroll_dim=pianoroll_dim,
-        total_stages=total_stages
+        max_stages=total_stages
     )
-    if curriculum_type = 'random':
+    if curriculum_type == 'random':
         model_path = 'saved_models/' + subfolder + '/' + curriculum_type + str(total_stages) +  '.pt'
     else:
         model_path = 'saved_models/' + subfolder + '/' + curriculum_type +  '.pt'
@@ -387,7 +390,7 @@ def load_model_no_stage(
     model = GridMLMMelHarmNoStage(
         chord_vocab_size=len(tokenizer.vocab),
         device=device,
-        total_stages
+        max_stages=total_stages
     )
     if curriculum_type == 'random':
         model_path = 'saved_models/' + subfolder + '/no_stage/' + curriculum_type + str(total_stages) +  '.pt'
