@@ -9,9 +9,9 @@ import os
 import numpy as np
 from baseline_models import BaselineModeller
 
-generate_primary = True
+generate_primary = False
 generate_baseline = True
-generate_ablations = True
+generate_ablations = False
 
 # output folders
 mxl_folder = 'musicXMLs/jazz/'

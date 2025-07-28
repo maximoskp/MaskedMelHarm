@@ -122,8 +122,8 @@ class BaselineModeller():
             eos_token_id=self.baseline_tokenizer.eos_token_id,
             max_length=self.gpt_model.config.max_position_embeddings,
             num_beams=5,
-            # do_sample=True,
-            # temperature=1
+            do_sample=True,
+            temperature=1.
         )
 
         output_tokens = [self.baseline_tokenizer.ids_to_tokens[t] for t in outputs[0].tolist()]
@@ -139,8 +139,8 @@ class BaselineModeller():
             eos_token_id=self.baseline_tokenizer.eos_token_id,
             max_length=self.bart_model.config.max_position_embeddings,
             num_beams=5,
-            # do_sample=True,
-            # temperature=1
+            do_sample=True,
+            temperature=1.
         )
 
         output_tokens = [self.baseline_tokenizer.ids_to_tokens[t] for t in input_ids.tolist()] + \

@@ -704,7 +704,11 @@ class MergedMelHarmTokenizer(PreTrainedTokenizer):
             # melody_part.show('text')
             score.show('text')
         elif output_format == 'file':
-            score.write('musicxml', output_path)
+            if output_path.endswith('.xml') or output_path.endswith('.mxl') \
+            or output_path.endswith('.musicxml'):
+                score.write('musicxml', output_path)
+            elif output_path.endswith('.mid') or output_path.endswith('.midi'):
+                score.write('midi', output_path)
             # melody_part.write('musicxml', output_path)
             print('Saved as', output_path)
     # end decode
