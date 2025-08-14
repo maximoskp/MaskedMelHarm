@@ -34,7 +34,6 @@ print("✅ Models ready")
 def harmonise(file_path: str,
               variant: str,
               constraints: bool):
-
     # ---------------- choose model & generation routine ----------
     is_base2 = variant.startswith("base2")
     gen_fn   = generate_files_with_base2 if is_base2 else generate_files_with_random

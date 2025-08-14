@@ -412,7 +412,8 @@ def generate_files_with_base2(
         midi_folder,
         name_suffix,
         use_constraints=False,
-        normalize_tonality=False
+        normalize_tonality=False,
+        num_stages=10
     ):
     pad_token_id = tokenizer.pad_token_id
     nc_token_id = tokenizer.nc_token_id
@@ -452,10 +453,11 @@ def generate_files_with_base2(
     )
     if normalize_tonality:
         gen_score = transpose_score(gen_score, input_encoded['back_interval'])
-    mxl_file_name = mxl_folder + f'gen_{name_suffix}' + '.mxl'
-    midi_file_name = midi_folder + f'gen_{name_suffix}' + '.mid'
+    mxl_file_name = os.path.join(mxl_folder, f'gen_{name_suffix}' + '.mxl')
+    midi_file_name = os.path.join(midi_folder, f'gen_{name_suffix}' + '.mid')
     save_harmonized_score(gen_score, out_path=mxl_file_name)
-    os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
+    save_harmonized_score(gen_score, out_path=midi_file_name)
+    # os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
 
     real_score = overlay_generated_harmony(
         input_encoded['melody_part'],
@@ -465,10 +467,11 @@ def generate_files_with_base2(
     )
     if normalize_tonality:
         real_score = transpose_score(real_score, input_encoded['back_interval'])
-    mxl_file_name = mxl_folder + f'real_{name_suffix}' + '.mxl'
-    midi_file_name = midi_folder + f'real_{name_suffix}' + '.mid'
+    mxl_file_name = os.path.join(mxl_folder, f'real_{name_suffix}' + '.mxl')
+    midi_file_name = os.path.join(midi_folder, f'real_{name_suffix}' + '.mid')
     save_harmonized_score(real_score, out_path=mxl_file_name)
-    os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
+    save_harmonized_score(real_score, out_path=midi_file_name)
+    # os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
 
     return gen_output_tokens, harmony_real_tokens, gen_score, real_score
 # end generate_files_with_base2
@@ -481,7 +484,8 @@ def generate_files_with_random(
         midi_folder,
         name_suffix,
         use_constraints=False,
-        normalize_tonality=False
+        normalize_tonality=False,
+        num_stages=10
     ):
     pad_token_id = tokenizer.pad_token_id
     nc_token_id = tokenizer.nc_token_id
@@ -496,7 +500,7 @@ def generate_files_with_random(
         model=model,
         melody_grid=melody_grid.to(model.device),
         conditioning_vec=conditioning_vec.to(model.device),
-        num_stages=10,
+        num_stages=num_stages,
         mask_token_id=tokenizer.mask_token_id,
         temperature=1.0,
         strategy='sample',
@@ -521,10 +525,11 @@ def generate_files_with_random(
     )
     if normalize_tonality:
         gen_score = transpose_score(gen_score, input_encoded['back_interval'])
-    mxl_file_name = mxl_folder + f'gen_{name_suffix}' + '.mxl'
-    midi_file_name = midi_folder + f'gen_{name_suffix}' + '.mid'
+    mxl_file_name = os.path.join(mxl_folder, f'gen_{name_suffix}' + '.mxl')
+    midi_file_name = os.path.join(midi_folder, f'gen_{name_suffix}' + '.mid')
     save_harmonized_score(gen_score, out_path=mxl_file_name)
-    os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
+    save_harmonized_score(gen_score, out_path=midi_file_name)
+    # os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
 
     real_score = overlay_generated_harmony(
         input_encoded['melody_part'],
@@ -534,10 +539,11 @@ def generate_files_with_random(
     )
     if normalize_tonality:
         real_score = transpose_score(real_score, input_encoded['back_interval'])
-    mxl_file_name = mxl_folder + f'real_{name_suffix}' + '.mxl'
-    midi_file_name = midi_folder + f'real_{name_suffix}' + '.mid'
+    mxl_file_name = os.path.join(mxl_folder, f'real_{name_suffix}' + '.mxl')
+    midi_file_name = os.path.join(midi_folder, f'real_{name_suffix}' + '.mid')
     save_harmonized_score(real_score, out_path=mxl_file_name)
-    os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
+    save_harmonized_score(real_score, out_path=midi_file_name)
+    # os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
 
     return gen_output_tokens, harmony_real_tokens, gen_score, real_score
 # end generate_files_with_random

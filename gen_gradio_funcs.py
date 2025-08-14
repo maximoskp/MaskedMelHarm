@@ -457,7 +457,6 @@ def generate_files_with_base2(
     midi_file_name = os.path.join(midi_folder, f'gen_{name_suffix}' + '.mid')
     save_harmonized_score(gen_score, out_path=mxl_file_name)
     save_harmonized_score(gen_score, out_path=midi_file_name)
-    print('GEN_BASE2: ', mxl_file_name)
     # os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
 
     real_score = overlay_generated_harmony(
@@ -492,11 +491,11 @@ def generate_files_with_random(
     nc_token_id = tokenizer.nc_token_id
 
     input_encoded = tokenizer.encode( input_f, keep_durations=True, normalize_tonality=normalize_tonality )
-
+    
     harmony_real = torch.LongTensor(input_encoded['input_ids']).reshape(1, len(input_encoded['input_ids']))
     melody_grid = torch.FloatTensor( input_encoded['pianoroll'] ).reshape( 1, input_encoded['pianoroll'].shape[0], input_encoded['pianoroll'].shape[1] )
     conditioning_vec = torch.FloatTensor( input_encoded['time_signature'] ).reshape( 1, len(input_encoded['time_signature']) )
-
+    
     random_generated_harmony = random_progressive_generate(
         model=model,
         melody_grid=melody_grid.to(model.device),
