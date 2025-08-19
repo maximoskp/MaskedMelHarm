@@ -99,17 +99,20 @@ with gr.Blocks(css=css) as demo:
             file_in      = gr.File(type="filepath", label="MIDI or MusicXML")
             orig_viewer  = gr.HTML()                 # preview of the melody
             # hidden state to hold the preprocessed MusicXML path
-            preproc_xml = gr.State()  
+            # preproc_xml = gr.State()
+            preproc_midi = gr.State()
             # new “Clear” button
             clear_btn = gr.Button("Clear Input", variant="secondary", visible=False)
             # when clicked, wipe both the file input and the preview
             clear_btn.click(
                 fn=lambda: (None, "", None, gr.update(visible=False)), 
                 inputs=None, 
-                outputs=[file_in, orig_viewer, preproc_xml, clear_btn]
+                outputs=[file_in, orig_viewer, preproc_midi, clear_btn]
+                # outputs=[file_in, orig_viewer, preproc_xml, clear_btn]
             )
 
-            file_in.change(render_original,   inputs=file_in, outputs=[orig_viewer, preproc_xml])
+            # file_in.change(render_original,   inputs=file_in, outputs=[orig_viewer, preproc_xml])
+            file_in.change(render_original,   inputs=file_in, outputs=[orig_viewer, preproc_midi])
             # whenever file_in changes, show the clear button if there's a path
             file_in.change(
                 fn=lambda fp: gr.update(visible=bool(fp)),
@@ -125,13 +128,14 @@ with gr.Blocks(css=css) as demo:
             example_dd.change(
                 fn=load_example,
                 inputs=example_dd,
-                outputs=[file_in, orig_viewer, preproc_xml, clear_btn],
+                outputs=[file_in, orig_viewer, preproc_midi, clear_btn],
+                # outputs=[file_in, orig_viewer, preproc_xml, clear_btn],
             )
 
             gr.Markdown("### 2. Choose model")
             variant = gr.Dropdown(
                 choices=list(models.keys()),
-                value="base2 • all 12 keys",
+                value="base2 • Cmaj/Amin",
                 label="Model variant"
             )
             constraints = gr.Checkbox(label="Respect chord-constraints", value=True)
@@ -147,7 +151,7 @@ with gr.Blocks(css=css) as demo:
     # wiring
     run_btn.click(
         fn=harmonise,
-        inputs=[preproc_xml, variant, constraints],
+        inputs=[preproc_midi, variant, constraints],
         outputs=[gen_viewer, mxl_out, mid_out],
     )
 

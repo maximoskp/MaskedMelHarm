@@ -367,7 +367,6 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         chords_part = None
         if len(score.parts) > 1:
             chords_part = score.parts[1].chordify().flatten()
-
         # Define quantization note length
         if self.quantization == '16th':
             ql_per_quantum = 1 / 4
@@ -540,7 +539,6 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         chords_part = None
         if len(score.parts) > 1:
             chords_part = score.parts[1].chordify().flatten()
-
         # Define quantization note length
         if self.quantization == '16th':
             ql_per_quantum = 1 / 4

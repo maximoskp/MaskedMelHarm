@@ -2,7 +2,7 @@ import os
 import music21 as m21
 import tempfile, base64, html, textwrap
 import gradio as gr
-
+from copy import deepcopy
 
 def make_srcdoc(xml_str: str, midi_b64: str) -> str:
     import base64, html, textwrap
@@ -179,8 +179,27 @@ def render_original(file_path: str):
     # guard against “clear” clicks on the File widget
     if not file_path:
         # returning an empty string clears the HTML preview
-      return "", None
+        return "", None
     score = m21.converter.parse(file_path)
+    # # 1. Load the MIDI file but suppress automatic TS inference
+    # score = m21.converter.parse(file_path, quantizePost=False)
+
+    # # 2. Collect the time-signature stream for the first part
+    # part0 = score.parts[0]
+    # part0_ts = part0.flat.getElementsByClass('TimeSignature').stream()
+
+    # # 3. Make the *entire* score use that stream
+    # for p in score.parts:
+    #     # Remove anything the converter may have guessed
+    #     p.flat.removeByClass('TimeSignature')
+    #     # Insert the TS stream from part 0 (deep-copied) at offset 0
+    #     for ts in part0_ts:
+    #         # find the measure that should contain this TS
+    #         m = p.measure(ts.measureNumber)
+    #         if m is not None:
+    #             ts_deepcopy = deepcopy(ts)
+    #             m.insert(0, ts_deepcopy)
+    #         # else: the part is shorter, nothing to do
     # preprocessing function
     score = expand_clean_split_noRepeats(score)
     
@@ -189,7 +208,7 @@ def render_original(file_path: str):
     midi_tmp = tempfile.NamedTemporaryFile(suffix=".mid",        delete=False).name
     score.write("musicxml", fp=xml_tmp)
     score.write("midi",     fp=midi_tmp)
-
+    
     with open(xml_tmp, "r", encoding="utf-8") as f:
         xml_str = f.read()
     with open(midi_tmp, "rb") as f:
@@ -198,7 +217,7 @@ def render_original(file_path: str):
     iframe = make_srcdoc(xml_str, midi_b64)
 
     # **return** both the HTML *and* the xml_tmp path
-    return iframe, xml_tmp
+    return iframe, midi_tmp
 
 
 def stripRepeatsAndVoltas(score):
@@ -227,7 +246,7 @@ def expand_clean_split_noRepeats(score, max_bars=16):
     """
     # 1) strip repeats so music plays only once
     noRep = stripRepeatsAndVoltas(score)
-
+    
     # 2) clean only *redundant* clefs / time‐sigs / key‐sigs
     for p in noRep.parts:
         lastC = lastT = lastK = None
@@ -252,21 +271,64 @@ def expand_clean_split_noRepeats(score, max_bars=16):
                     m.remove(ks)
                 else:
                     lastK = ks.sharps
-
+    # # parts 0 and 1 must have the same time-sigs
+    # if len(noRep.parts) > 1:
+    #     # get measures from parts 0 and 1
+    #     mes0 = noRep.parts[0].getElementsByClass(m21.stream.Measure)
+    #     mes1 = noRep.parts[0].getElementsByClass(m21.stream.Measure)
+    #     for i,m0 in enumerate(mes0):
+    #         ts_in_m0 = m0.getElementsByClass('TimeSignature')
+    #         if len( ts_in_m0 ) > 0:
+    #             ts_copy = deepcopy( ts_in_m0[0] )
+    #             print('before', ts_copy)
+    #             m1 = mes1[i]
+    #             # remove any existing time signature in m1 first (optional)
+    #             for ts_old in m1.getElementsByClass('TimeSignature'):
+    #                 m1.remove(ts_old)
+    #             m1.insert(0, ts_copy)
+    #             print('new: ', m1.getElementsByClass('TimeSignature')[0])
     # 3) pull out ChordSymbols and build a chord‐staff
     melody = noRep.parts[0]
+
+    # chords_part = deepcopy(melody)
+    new_chords_part = None
+    if len(noRep.parts) > 1:
+        chords_part = noRep.parts[1]
+        chords_part = chords_part.flatten()
+        # get measures from parts 0 and 1
+        mes0 = noRep.parts[0].getElementsByClass(m21.stream.Measure)
+        ts_in_m0 = mes0[0].getElementsByClass('TimeSignature')
+        # remove any existing time signature in m1 first (optional)
+        for ts_old in chords_part.getElementsByClass('TimeSignature'):
+            chords_part.remove(ts_old)
+        # assign new time signature
+        ts_copy = deepcopy( ts_in_m0[0] )
+        chords_part.insert(0, ts_copy)
+        # make measures
+        new_chords_part = chords_part.makeMeasures(inPlace=False)
+        # # Strip musical elements but retain structure
+        # for measure in chords_part.getElementsByClass(m21.stream.Measure):
+        #     for el in list(measure):
+        #         if isinstance(el, (m21.note.Note, m21.note.Rest, m21.chord.Chord, m21.harmony.ChordSymbol)):
+        #             measure.remove(el)
+        #     # Add a placeholder full-measure rest to preserve the measure
+        #     full_rest = m21.note.Rest()
+        #     full_rest.quarterLength = measure.barDuration.quarterLength
+        #     measure.insert(0.0, full_rest)
+    
     symbols = list(melody.recurse().getElementsByClass(m21.harmony.ChordSymbol))
     if not symbols:
-        # no lead‐sheet symbols → just return the cleaned, no‐repeat stream
-        return noRep
+        # assemble final two‐staff score: melody above, chords below
+        out = m21.stream.Score()
+        out.insert(0, melody)
+        if new_chords_part is not None:
+          out.insert(0, new_chords_part)
 
-    chordPart = m21.stream.Part(id='Chords')
-    # carry over opening clef/time/key so measures align
-    for x in melody.measure(1).getElementsByClass((m21.clef.Clef,
-                                                   m21.meter.TimeSignature,
-                                                   m21.key.KeySignature)):
-        chordPart.insert(0, x)
-
+        # 5) if requested, keep only bars 1 → max_bars
+        if max_bars is not None:
+            out = out.measures(1, max_bars)
+        return out
+    
     for m in melody.getElementsByClass(m21.stream.Measure):
         syms = sorted(m.getElementsByClass(m21.harmony.ChordSymbol),
                       key=lambda cs: cs.offset)
@@ -300,15 +362,15 @@ def expand_clean_split_noRepeats(score, max_bars=16):
 
             # yank the symbol and insert the chord
             m.remove(cs)
-            chordPart.insert(absOff, realC)
+            chords_part.insert(absOff, realC)
 
-    # 4) wrap chordPart in measures
-    chordPart = chordPart.makeMeasures(inPlace=False)
+    # # 4) wrap chordPart in measures
+    # chords_part = chords_part.makeMeasures(inPlace=False)
 
     # assemble final two‐staff score: melody above, chords below
     out = m21.stream.Score()
     out.insert(0, melody)
-    out.insert(0, chordPart)
+    out.insert(0, chords_part)
 
     # 5) if requested, keep only bars 1 → max_bars
     if max_bars is not None:
@@ -320,11 +382,13 @@ def expand_clean_split_noRepeats(score, max_bars=16):
 def load_example(fname):
     path = os.path.join("example_inputs", fname)
     # render_original returns (iframe_html, preproc_xml_path)
-    iframe_html, preproc_xml_path = render_original(path)
+    # iframe_html, preproc_xml_path = render_original(path)
+    iframe_html, preproc_midi_path = render_original(path)
     # return values for [file_in, orig_viewer, preproc_xml, clear_btn]
     return (
         path,                        # set the File widget
         iframe_html,                 
-        preproc_xml_path,            
+        # preproc_xml_path,
+        preproc_midi_path, # originally the above was returned
         gr.update(visible=True)      # show the “Clear” button
     )
