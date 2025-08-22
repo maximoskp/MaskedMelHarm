@@ -33,7 +33,16 @@ for k in list(MIR_QUALITIES.keys()) + ['7(b9)', '7(#9)', '7(#11)', '7(b13)']:
     EXT_MIR_QUALITIES[k] = semitone_bitmap
 
 class CSGridMLMTokenizer(PreTrainedTokenizer):
-    def __init__(self, quantization='16th', fixed_length=None, vocab=None, special_tokens=None, use_pc_roll=True, **kwargs):
+    def __init__(
+            self,
+            quantization='16th',
+            fixed_length=None,
+            vocab=None,
+            special_tokens=None,
+            use_pc_roll=True,
+            intertwine_bar_info=True,
+            **kwargs
+        ):
         self.unk_token = '<unk>'
         self.pad_token = '<pad>'
         self.bos_token = '<s>'
@@ -41,8 +50,10 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         self.no_chord = '<nc>'
         self.csl_token = '<s>'
         self.mask_token = '<mask>'
+        self.bar_token = '<bar>'
         self.quantization = quantization
         self.fixed_length = fixed_length
+        self.intertwine_bar_info = intertwine_bar_info
         self.special_tokens = {}
         self.use_pc_roll = use_pc_roll
         self.construct_basic_vocab()
@@ -80,6 +91,7 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
                 '</s>': 3,
                 '<nc>': 4,
                 '<mask>': 5,
+                '<bar>': 6
             }
 
         self.update_ids_to_tokens()
@@ -89,6 +101,7 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         self.eos_token_id = 3
         self.nc_token_id = 4
         self.mask_token_id = 5
+        self.bar_token_id = 6
         # Compute and store most popular time signatures coming from predefined time tokens
         self.time_quantization = []  # Store predefined quantized times
         self.time_signatures = []  # Store most common time signatures
@@ -638,7 +651,60 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
             full_pianoroll = np.hstack([pitch_classes, raw_pianoroll])  # Shape: (T, 12 + 88)
         else:
             full_pianoroll = raw_pianoroll  # Shape: (T, 88)
+        
+        # intertwine bar information in pianoroll and harmony tokens
+        if self.intertwine_bar_info:
+            # --- Prepare ---
+            num_steps = full_pianoroll.shape[1]  # current time steps (columns)
+            num_pitches = full_pianoroll.shape[0]  # rows = pitches/features
+            bar_row = np.zeros((1, num_steps), dtype=np.float32)  # all-zero bar row
+            full_pianoroll = np.vstack([full_pianoroll, bar_row])  # add extra row at bottom
 
+            # Compute insertion indices (where bars start)
+            # Assuming you already know bar_step positions from melody or measure offsets
+            insertion_indices = []
+            for meas in score.parts[0].getElementsByClass(stream.Measure):
+                bar_step = int(np.round(meas.offset / ql_per_quantum))
+                if 0 <= bar_step <= full_pianoroll.shape[1]:  # allow insertion at end too
+                    insertion_indices.append(bar_step)
+
+            # Make sure sorted and unique
+            insertion_indices_pianoroll = sorted(set(insertion_indices))
+            insertion_indices_tokens = sorted(set(insertion_indices))
+
+            # --- Insert bar columns into pianoroll ---
+            pianoroll_ext = []
+            current_idx = 0
+            for step in range(full_pianoroll.shape[1] + len(insertion_indices_pianoroll)):
+                if insertion_indices_pianoroll and step == insertion_indices_pianoroll[0] + current_idx:
+                    # insert a bar column
+                    bar_col = np.zeros((full_pianoroll.shape[0], 1), dtype=np.float32)
+                    bar_col[-1, 0] = 1.0  # mark in the bar row
+                    pianoroll_ext.append(bar_col)
+                    current_idx += 1
+                    insertion_indices_pianoroll.pop(0)
+                # always add the original step (aligned)
+                if step - current_idx < full_pianoroll.shape[1]:
+                    pianoroll_ext.append(full_pianoroll[:, step - current_idx:step - current_idx + 1])
+
+            full_pianoroll = np.hstack(pianoroll_ext)
+
+            # --- Insert bar tokens into chord sequence ---
+            chord_tokens_ext = []
+            chord_token_ids_ext = []
+            step = 0
+            for i in range(len(chord_tokens) + len(insertion_indices_tokens)):
+                if i in insertion_indices_tokens:  # bar insertion
+                    chord_tokens_ext.append(self.bar_token)
+                    chord_token_ids_ext.append(self.bar_token_id)
+                if step < len(chord_tokens):
+                    chord_tokens_ext.append(chord_tokens[step])
+                    chord_token_ids_ext.append(chord_token_ids[step])
+                    step += 1
+
+            chord_tokens = chord_tokens_ext
+            chord_token_ids = chord_token_ids_ext
+            
         # Apply fixed length (pad or trim)
         if self.fixed_length is not None:
             if n_steps >= self.fixed_length:
