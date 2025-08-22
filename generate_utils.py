@@ -135,6 +135,8 @@ def structured_progressive_generate(
 ):
     device = melody_grid.device
     seq_len = melody_grid.shape[1]
+
+    # Start with all tokens masked
     visible_harmony = torch.full((1, seq_len), mask_token_id, dtype=torch.long, device=device)
     if chord_constraints is not None:
         idxs  = torch.logical_and( chord_constraints != nc_token_id , chord_constraints != pad_token_id )
@@ -418,7 +420,7 @@ def generate_files_with_base2(
     pad_token_id = tokenizer.pad_token_id
     nc_token_id = tokenizer.nc_token_id
 
-    input_encoded = tokenizer.encode( input_f, keep_durations=True, normalize_tonality=False )
+    input_encoded = tokenizer.encode( input_f, keep_durations=True, normalize_tonality=normalize_tonality )
 
     harmony_real = torch.LongTensor(input_encoded['input_ids']).reshape(1, len(input_encoded['input_ids']))
     melody_grid = torch.FloatTensor( input_encoded['pianoroll'] ).reshape( 1, input_encoded['pianoroll'].shape[0], input_encoded['pianoroll'].shape[1] )
@@ -491,11 +493,11 @@ def generate_files_with_random(
     nc_token_id = tokenizer.nc_token_id
 
     input_encoded = tokenizer.encode( input_f, keep_durations=True, normalize_tonality=normalize_tonality )
-
+    
     harmony_real = torch.LongTensor(input_encoded['input_ids']).reshape(1, len(input_encoded['input_ids']))
     melody_grid = torch.FloatTensor( input_encoded['pianoroll'] ).reshape( 1, input_encoded['pianoroll'].shape[0], input_encoded['pianoroll'].shape[1] )
     conditioning_vec = torch.FloatTensor( input_encoded['time_signature'] ).reshape( 1, len(input_encoded['time_signature']) )
-
+    
     random_generated_harmony = random_progressive_generate(
         model=model,
         melody_grid=melody_grid.to(model.device),
