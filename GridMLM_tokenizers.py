@@ -318,6 +318,7 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
             normalize_tonality=False
         ):
         file_ext = file_path.split('.')[-1]
+        
         if file_ext in ['xml', 'mxl', 'musicxml']:
             return self.encode_musicXML(
                 file_path,
@@ -363,7 +364,9 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         ts_num_list[ int( min( max(time_signature.numerator-2,0) , 13) ) ] = 1
         ts_den_list[ int( time_signature.denominator == 4 ) ] = 1
         melody_part = score.parts[0].flatten()
-
+        chords_part = None
+        if len(score.parts) > 1:
+            chords_part = score.parts[1].chordify().flatten()
         # Define quantization note length
         if self.quantization == '16th':
             ql_per_quantum = 1 / 4
@@ -382,9 +385,14 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         first_chord_offset = None
         skip_steps = 0
         if trim_start:
-            for el in melody_part.recurse().getElementsByClass(harmony.ChordSymbol):
-                first_chord_offset = el.offset
-                break
+            if chords_part is None:
+                for el in melody_part.recurse().getElementsByClass(harmony.ChordSymbol):
+                    first_chord_offset = el.offset
+                    break
+            else:
+                for el in chords_part:
+                    first_chord_offset = el.offset
+                    break
             measure_start_offset = 0.0
             if first_chord_offset is not None:
                 for meas in melody_part.getElementsByClass(stream.Measure):
@@ -419,17 +427,28 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
                     if midi in pitch_range:
                         idx = pitch_range.index(midi)
                         raw_pianoroll[start:start+dur_steps, idx] = 1
-
+        
         # Fill chord grid
-        for el in melody_part.recurse().getElementsByClass(harmony.ChordSymbol):
-            start = int(np.round(el.offset / ql_per_quantum))
-            if 0 <= start < len(chord_tokens):
-                chord_tokens[start], chord_token_ids[start] = self.handle_chord_symbol(el)
-            if keep_durations:
-                end = int(np.round( (el.offset + el.duration.quarterLength) / ql_per_quantum)) + 1
-                if end < len(chord_tokens):
-                    chord_tokens[end] = '<nc>'
-                    chord_token_ids[end] = self.vocab['<nc>']
+        if chords_part is None:
+            for el in melody_part.recurse().getElementsByClass(harmony.ChordSymbol):
+                start = int(np.round(el.offset / ql_per_quantum))
+                if 0 <= start < len(chord_tokens):
+                    chord_tokens[start], chord_token_ids[start] = self.handle_chord_symbol(el)
+                if keep_durations:
+                    end = int(np.round( (el.offset + el.duration.quarterLength) / ql_per_quantum)) + 1
+                    if end < len(chord_tokens):
+                        chord_tokens[end] = '<nc>'
+                        chord_token_ids[end] = self.vocab['<nc>']
+        else:
+            for el in chords_part.recurse().getElementsByClass(chord.Chord):
+                start = int(np.round(el.offset / ql_per_quantum))
+                if 0 <= start < len(chord_tokens):
+                    chord_tokens[start], chord_token_ids[start] = self.handle_chord_symbol(el)
+                if keep_durations:
+                    end = int(np.round( (el.offset + el.duration.quarterLength) / ql_per_quantum)) + 1
+                    if end < len(chord_tokens):
+                        chord_tokens[end] = '<nc>'
+                        chord_token_ids[end] = self.vocab['<nc>']
 
         # Propagate chord forward
         for i in range(1, len(chord_tokens)):
@@ -520,7 +539,6 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         chords_part = None
         if len(score.parts) > 1:
             chords_part = score.parts[1].chordify().flatten()
-
         # Define quantization note length
         if self.quantization == '16th':
             ql_per_quantum = 1 / 4
