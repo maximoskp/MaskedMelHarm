@@ -245,7 +245,7 @@ def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_s
     inserted_chords = {}
 
     for i, mir_chord in enumerate(generated_chords):
-        if mir_chord in ("<pad>", "<nc>"):
+        if mir_chord in ("<pad>", "<nc>", "<bar>"):
             continue
         if mir_chord == last_chord_symbol:
             continue
