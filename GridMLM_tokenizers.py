@@ -41,6 +41,7 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
             special_tokens=None,
             use_pc_roll=True,
             intertwine_bar_info=True,
+            trim_start=False,
             **kwargs
         ):
         self.unk_token = '<unk>'
@@ -48,12 +49,14 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         self.bos_token = '<s>'
         self.eos_token = '</s>'
         self.no_chord = '<nc>'
+        self.nc_token = '<nc>'
         self.csl_token = '<s>'
         self.mask_token = '<mask>'
         self.bar_token = '<bar>'
         self.quantization = quantization
         self.fixed_length = fixed_length
         self.intertwine_bar_info = intertwine_bar_info
+        self.trim_start = trim_start
         self.special_tokens = {}
         self.use_pc_roll = use_pc_roll
         self.construct_basic_vocab()
@@ -322,10 +325,133 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         return score
     # end randomize_score
 
+    def pitch_class_from_chord_token(self, chord_token):
+        """
+        Convert a chord token to its pitch class profile.
+        
+        Parameters
+        ----------
+        chord_token : str
+            Chord token in the format "Root:Quality" or "<nc>" or "<pad>".
+        
+        Returns
+        -------
+        np.ndarray
+            12D binary vector representing the pitch class profile.
+        """
+        if chord_token in [self.nc_token, self.pad_token, self.bar_token]:
+            return np.zeros(12, dtype=int)
+
+        if chord_token not in self.vocab:
+            return np.zeros(12, dtype=int)
+
+        try:
+            root, quality = chord_token.split(':')
+        except ValueError:
+            root = chord_token
+            quality = ''
+        
+        if quality not in EXT_MIR_QUALITIES:
+            return np.zeros(12, dtype=int)
+
+        # Get root pitch class
+        root_pitch = pitch.Pitch(root)
+        root_pc = root_pitch.pitchClass
+
+        # Get quality pitch class bitmap
+        quality_bitmap = EXT_MIR_QUALITIES[quality]
+
+        # Rotate bitmap to match root
+        pc_profile = np.roll(quality_bitmap, root_pc)
+
+        return pc_profile
+    # end pitch_class_from_chord_token
+
+    def compute_harmonic_rhythm_density(self, chord_token_ids):
+        """
+        Compute harmonic rhythm density: average number of chord changes
+        per bar that contains at least one valid chord.
+        
+        Args:
+            chord_token_ids (list[int]): sequence of tokens including bar, chord, nc, and pad.
+            
+        Returns:
+            float: average number of chord changes per bar with chords,
+                or 0.0 if no valid bar exists.
+        """
+        bars = []
+        current_bar = []
+
+        # Split into bars
+        for tok in chord_token_ids:
+            if tok == self.bar_token_id:
+                if current_bar:  # save previous bar
+                    bars.append(current_bar)
+                current_bar = []
+            else:
+                current_bar.append(tok)
+        if current_bar:  # last bar
+            bars.append(current_bar)
+
+        chord_counts = []
+
+        for bar in bars:
+            valid_chords = [t for t in bar if t not in (self.nc_token_id, self.pad_token_id)]
+            if not valid_chords:
+                continue  # skip bars without valid chords
+
+            # Count chord changes (successive unique chord IDs)
+            changes = 1  # at least one chord if valid_chords is not empty
+            for prev, curr in zip(valid_chords, valid_chords[1:]):
+                if curr != prev:
+                    changes += 1
+
+            chord_counts.append(changes)
+
+        if not chord_counts:
+            return 0.0  # no valid bars
+
+        return sum(chord_counts) / len(chord_counts)
+    # end compute_harmonic_rhythm_density
+
+    def compute_harmonic_complexity(self, chord_tokens):
+        """
+        Compute harmonic complexity as the information entropy of the average
+        pitch class profile across the given chord sequence.
+
+        Parameters
+        ----------
+        chord_tokens : list
+            List of chord tokens (strings or ids, depending on how pitch_class_from_chord_token works).
+
+        Returns
+        -------
+        float
+            Harmonic complexity (entropy in nats).
+        """
+        if not chord_tokens:
+            return 0.0
+
+        # Accumulate pitch class profiles
+        pitch_class_sum = np.zeros(12, dtype=float)
+        for chord_token in chord_tokens:
+            pc_profile = self.pitch_class_from_chord_token(chord_token)  # 12D binary vector
+            pitch_class_sum += pc_profile
+
+        # Normalize to a probability distribution
+        if np.sum(pitch_class_sum) == 0:
+            return 0.0
+        pitch_class_dist = pitch_class_sum / np.sum(pitch_class_sum)
+
+        # Compute entropy (natural log)
+        entropy = -np.sum(pitch_class_dist * np.log(pitch_class_dist + 1e-12))
+
+        return float(entropy)
+    # end compute_harmonic_complexity
+
     def encode(
             self,
             file_path,
-            trim_start=True,
             filler_token='<nc>',
             keep_durations=False,
             normalize_tonality=False
@@ -335,7 +461,6 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         if file_ext in ['xml', 'mxl', 'musicxml']:
             return self.encode_musicXML(
                 file_path,
-                trim_start=trim_start,
                 filler_token=filler_token,
                 keep_durations=keep_durations,
                 normalize_tonality=normalize_tonality
@@ -343,7 +468,6 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         elif file_ext in ['mid', 'midi']:
             return self.encode_MIDI(
                 file_path,
-                trim_start=trim_start,
                 filler_token=filler_token,
                 keep_durations=keep_durations,
                 normalize_tonality=normalize_tonality
@@ -355,7 +479,6 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
     def encode_musicXML(
             self,
             file_path,
-            trim_start=True,
             filler_token='<nc>',
             keep_durations=False,
             normalize_tonality=False
@@ -397,7 +520,7 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         # Step 1: Find first chord symbol and bar to trim before it
         first_chord_offset = None
         skip_steps = 0
-        if trim_start:
+        if self.trim_start:
             if chords_part is None:
                 for el in melody_part.recurse().getElementsByClass(harmony.ChordSymbol):
                     first_chord_offset = el.offset
@@ -476,7 +599,7 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
                 chord_token_ids[i] = self.vocab[filler_token]
 
         # Trim to start at first chord bar
-        if trim_start:
+        if self.trim_start:
             raw_pianoroll = raw_pianoroll[skip_steps:]
             chord_tokens = chord_tokens[skip_steps:]
             chord_token_ids = chord_token_ids[skip_steps:]
@@ -565,6 +688,18 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
                 attention_mask = [1]*n_steps + [0]*pad_len
         else:
             attention_mask = [1]*n_steps
+
+        # compute rhythm density and harmonic complexity
+        # each function returns a numerical value
+        # that will later be translated into a
+        # 4D binary array with categories:
+        # [1,0,0,0]: low
+        # [0,1,0,0]: medium
+        # [0,0,1,0]: high
+        # [0,0,0,1]: no condition
+        h_rhythm = self.compute_harmonic_rhythm_density(chord_token_ids)
+        h_complexity = self.compute_harmonic_complexity(chord_tokens)
+
         return {
             'input_tokens': chord_tokens,
             'input_ids': chord_token_ids,
@@ -574,14 +709,15 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
             'skip_steps': skip_steps,
             'melody_part':melody_part,
             'ql_per_quantum': ql_per_quantum,
-            'back_interval': back_interval if normalize_tonality else None
+            'back_interval': back_interval if normalize_tonality else None,
+            'harmonic_rhythm_density': h_rhythm,
+            'harmonic_complexity': h_complexity
         }
     # end encode_musicXML
 
     def encode_MIDI(
             self,
             file_path,
-            trim_start=True,
             filler_token='<nc>',
             keep_durations=False,
             normalize_tonality=False
@@ -623,7 +759,7 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         # Find first chord symbol and bar to trim before it
         first_chord_offset = None
         skip_steps = 0
-        if trim_start:
+        if self.trim_start:
             if chords_part is not None:
                 for el in chords_part.recurse().getElementsByClass(chord.Chord):
                     first_chord_offset = el.offset
@@ -688,7 +824,7 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
                     chord_token_ids[i] = self.vocab[filler_token]
 
         # Trim to start at first chord bar
-        if trim_start:
+        if self.trim_start:
             raw_pianoroll = raw_pianoroll[skip_steps:]
             chord_tokens = chord_tokens[skip_steps:]
             chord_token_ids = chord_token_ids[skip_steps:]
@@ -777,6 +913,18 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
                 attention_mask = [1]*n_steps + [0]*pad_len
         else:
             attention_mask = [1]*n_steps
+
+        # compute rhythm density and harmonic complexity
+        # each function returns a numerical value
+        # that will later be translated into a
+        # 4D binary array with categories:
+        # [1,0,0,0]: low
+        # [0,1,0,0]: medium
+        # [0,0,1,0]: high
+        # [0,0,0,1]: no condition
+        h_rhythm = self.compute_harmonic_rhythm_density(chord_token_ids)
+        h_complexity = self.compute_harmonic_complexity(chord_tokens)
+
         return {
             'input_tokens': chord_tokens,
             'input_ids': chord_token_ids,
@@ -786,7 +934,9 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
             'skip_steps': skip_steps,
             'melody_part':melody_part,
             'ql_per_quantum': ql_per_quantum,
-            'back_interval': back_interval if normalize_tonality else None
+            'back_interval': back_interval if normalize_tonality else None,
+            'harmonic_rhythm_density': h_rhythm,
+            'harmonic_complexity': h_complexity
         }
     # end encode_MIDI
 
