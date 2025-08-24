@@ -206,7 +206,8 @@ class CSGridMLMDataset(Dataset):
             'input_ids': encoded['input_ids'],
             'attention_mask': encoded['attention_mask'],
             'pianoroll': encoded['pianoroll'],
-            'time_signature': encoded['time_signature']
+            'time_signature': encoded['time_signature'],
+            'h_density_complexity': encoded['h_density_complexity']
         }
     # end getitem
 # end class dataset
@@ -224,12 +225,14 @@ def CSGridMLM_collate_fn(batch):
     input_ids = [torch.tensor(item['input_ids'], dtype=torch.long) for item in batch]
     attention_mask = [torch.tensor(item['attention_mask'], dtype=torch.long) for item in batch]
     time_signature = [torch.tensor(item['time_signature'], dtype=torch.float) for item in batch]
+    h_density_complexity = [torch.tensor(item['h_density_complexity'], dtype=torch.float) for item in batch]
     pianorolls = [torch.tensor(item['pianoroll'], dtype=torch.float) for item in batch]
 
     return {
         'input_ids': torch.stack(input_ids),  # shape: (B, L)
         'attention_mask': torch.stack(attention_mask),  # shape: (B, L)
         'time_signature': torch.stack(time_signature),  # shape: (B, whatever dim)
+        'h_density_complexity': torch.stack(h_density_complexity),  # shape: (B, whatever dim)
         'pianoroll': torch.stack(pianorolls),  # shape: (B, 140, T)
     }
 # end CSGridMLM_collate_fn

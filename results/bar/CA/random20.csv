@@ -1,0 +1,1 @@
+epoch,step,train_loss,train_acc,train_ppl,train_te,val_loss,val_acc,val_ppl,val_te,sav_version

@@ -59,6 +59,7 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         self.trim_start = trim_start
         self.special_tokens = {}
         self.use_pc_roll = use_pc_roll
+        self.pianoroll_dim = 88 + 12*use_pc_roll + intertwine_bar_info
         self.construct_basic_vocab()
         if vocab is not None:
             self.vocab = vocab
@@ -722,7 +723,7 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
             'back_interval': back_interval if normalize_tonality else None,
             'harmonic_rhythm_density': h_rhythm,
             'harmonic_complexity': h_complexity,
-            'conditions': r_cat + c_cat
+            'h_density_complexity': r_cat + c_cat
         }
     # end encode_musicXML
 
@@ -948,7 +949,7 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
             'back_interval': back_interval if normalize_tonality else None,
             'harmonic_rhythm_density': h_rhythm,
             'harmonic_complexity': h_complexity,
-            'conditions': r_cat + c_cat
+            'h_density_complexity': r_cat + c_cat
         }
     # end encode_MIDI
 

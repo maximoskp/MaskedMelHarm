@@ -219,7 +219,8 @@ def get_stage_uniform(epoch, max_epoch, max_stage):
     return np.random.randint(max_stage + 1)
 # end get_stage_uniform
 
-def validation_loop(model, valloader, mask_token_id, loss_fn, epoch, step, \
+def validation_loop(model, valloader, mask_token_id, bar_token_id, condition, loss_fn, \
+                    epoch, step, \
                     curriculum_type, train_loss, train_accuracy, \
                     train_perplexity, train_token_entropy,
                     best_val_loss, saving_version, results_path=None, transformer_path=None):
@@ -242,14 +243,15 @@ def validation_loop(model, valloader, mask_token_id, loss_fn, epoch, step, \
                 perplexity_metric.reset()
                 melody_grid = batch["pianoroll"].to(device)           # (B, 256, 140)
                 harmony_gt = batch["input_ids"].to(device)         # (B, 256)
-                conditioning_vec = batch["time_signature"].to(device)  # (B, C0)
+                conditioning_vec = batch[condition].to(device)  # (B, C0)
                 
                 # Apply masking to harmony
                 harmony_input, harmony_target, stage_indices = apply_masking(
                     harmony_gt,
                     mask_token_id,
                     total_stages=10,
-                    curriculum_type=curriculum_type
+                    curriculum_type=curriculum_type,
+                    bar_token_id=bar_token_id
                 )
 
                 # Forward pass
@@ -309,7 +311,8 @@ def train_with_curriculum(
     total_stages=10,
     results_path=None,
     transformer_path=None,
-    bar_token_id=None
+    bar_token_id=None,
+    condition='time_signature'
 ):
     device = next(model.parameters()).device
     perplexity_metric.to(device)
@@ -351,15 +354,30 @@ def train_with_curriculum(
                 model.train()
                 melody_grid = batch["pianoroll"].to(device)           # (B, 256, 100)
                 harmony_gt = batch["input_ids"].to(device)         # (B, 256)
-                conditioning_vec = batch["time_signature"].to(device)  # (B, C0)
-                
+                conditioning_vec = batch[condition].to(device)  # (B, C0)
+
+                if condition == 'h_density_complexity':
+                    # randomly neutralize density or complexity conditions for 20% of the batch
+                    B = conditioning_vec.shape[0]
+                    num_neutralize = max(int(0.2 * B), 1)
+                    indices = random.sample(range(B), num_neutralize)
+                    for idx in indices:
+                        if random.random() < 0.5:
+                            # Neutralize indices 0,1,2 to 0 and 3 to 1
+                            conditioning_vec[idx, 0:3] = 0
+                            conditioning_vec[idx, 3] = 1
+                        else:
+                            # Neutralize indices 4,5,6 to 0 and 7 to 1
+                            conditioning_vec[idx, 4:7] = 0
+                            conditioning_vec[idx, 7] = 1
+
                 # Apply masking to harmony
                 harmony_input, harmony_target, stage_indices = apply_masking(
                     harmony_gt,
                     mask_token_id,
                     total_stages=total_stages,
                     curriculum_type=curriculum_type,
-                    bar_token_id=None
+                    bar_token_id=bar_token_id
                 )
 
                 # Forward pass
@@ -402,6 +420,8 @@ def train_with_curriculum(
                         model,
                         valloader,
                         mask_token_id,
+                        bar_token_id,
+                        condition,
                         loss_fn,
                         epoch,
                         step,

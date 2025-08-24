@@ -55,8 +55,8 @@ def main():
 
     tokenizer = CSGridMLMTokenizer(fixed_length=256, intertwine_bar_info=True, trim_start=False)
 
-    train_dataset = CSGridMLMDataset(train_dir, tokenizer, 512)
-    val_dataset = CSGridMLMDataset(val_dir, tokenizer, 512)
+    train_dataset = CSGridMLMDataset(train_dir, tokenizer, 512, name_suffix='MLMH_bar')
+    val_dataset = CSGridMLMDataset(val_dir, tokenizer, 512, name_suffix='MLMH_bar')
 
     trainloader = DataLoader(train_dataset, batch_size=batchsize, shuffle=True, collate_fn=CSGridMLM_collate_fn)
     valloader = DataLoader(val_dataset, batch_size=batchsize, shuffle=False, collate_fn=CSGridMLM_collate_fn)
@@ -73,7 +73,9 @@ def main():
     model = GridMLMMelHarm(
         chord_vocab_size=len(tokenizer.vocab),
         device=device,
-        max_stages=total_stages
+        max_stages=total_stages,
+        conditioning_dim=8,
+        pianoroll_dim=tokenizer.pianoroll_dim,
     )
     model.to(device)
     optimizer = AdamW(model.parameters(), lr=lr)
@@ -101,6 +103,8 @@ def main():
         total_stages=total_stages,
         results_path=results_path,
         transformer_path=transformer_path,
+        bar_token_id=tokenizer.bar_token_id,
+        condition='h_density_complexity'
     )
     
 # end main
