@@ -16,7 +16,13 @@ from transformers import get_cosine_schedule_with_warmup
 
 perplexity_metric = Perplexity(ignore_index=-100)
 
-def random_progressive_masking(harmony_tokens, total_stages, mask_token_id, stage_in=None):
+def random_progressive_masking(
+        harmony_tokens,
+        total_stages,
+        mask_token_id,
+        stage_in=None,
+        bar_token_id=None
+    ):
     """
     Generate visible input and denoising target for diffusion-style training.
 
@@ -36,6 +42,14 @@ def random_progressive_masking(harmony_tokens, total_stages, mask_token_id, stag
 
     visible_harmony = torch.full_like(harmony_tokens, fill_value=mask_token_id)
     denoising_target = torch.full_like(harmony_tokens, fill_value=-100)  # -100 is ignored by CrossEntropyLoss
+
+    if bar_token_id is not None:
+        # Create a mask for bar token positions
+        bar_mask = (harmony_tokens == bar_token_id)
+        # Put bar tokens in visible_harmony (always unmasked)
+        visible_harmony[bar_mask] = bar_token_id
+        # Also include them in the denoising target (so model predicts them too)
+        denoising_target[bar_mask] = bar_token_id
     
     stage_indices = torch.randint(0, total_stages, (B,), device=device)
     for b in range(B):
@@ -56,7 +70,12 @@ def random_progressive_masking(harmony_tokens, total_stages, mask_token_id, stag
     return visible_harmony, denoising_target, stage_indices
 # end random_progressive_masking
 
-def structured_progressive_masking(harmony_tokens, total_stages, mask_token_id, stage_in=None):
+def structured_progressive_masking(
+        harmony_tokens,
+        total_stages,
+        mask_token_id,
+        stage_in=None
+    ):
     B, L = harmony_tokens.shape
     device = harmony_tokens.device
     visible_harmony = torch.full_like( harmony_tokens, mask_token_id )
@@ -83,15 +102,29 @@ def structured_progressive_masking(harmony_tokens, total_stages, mask_token_id, 
     return visible_harmony, denoising_target, stage_indices
 # end structured_progressive_masking
 
-def apply_masking(harmony_tokens,
-    mask_token_id,
-    total_stages=10,
-    curriculum_type='random',
-    stage=None):
+def apply_masking(
+        harmony_tokens,
+        mask_token_id,
+        total_stages=10,
+        curriculum_type='random',
+        stage=None,
+        bar_token_id=None
+    ):
     if curriculum_type == 'random':
-        return random_progressive_masking(harmony_tokens, total_stages, mask_token_id, stage)
+        return random_progressive_masking(
+                harmony_tokens,
+                total_stages,
+                mask_token_id,
+                stage,
+                bar_token_id
+            )
     elif curriculum_type == 'base2':
-        return structured_progressive_masking(harmony_tokens, total_stages, mask_token_id, stage)
+        return structured_progressive_masking(
+                harmony_tokens,
+                total_stages,
+                mask_token_id,
+                stage
+            )
 # end apply_masking
 
 def apply_structured_masking(harmony_tokens,
@@ -276,6 +309,7 @@ def train_with_curriculum(
     total_stages=10,
     results_path=None,
     transformer_path=None,
+    bar_token_id=None
 ):
     device = next(model.parameters()).device
     perplexity_metric.to(device)
@@ -324,7 +358,8 @@ def train_with_curriculum(
                     harmony_gt,
                     mask_token_id,
                     total_stages=total_stages,
-                    curriculum_type=curriculum_type
+                    curriculum_type=curriculum_type,
+                    bar_token_id=None
                 )
 
                 # Forward pass

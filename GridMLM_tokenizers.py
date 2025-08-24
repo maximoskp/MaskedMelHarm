@@ -367,6 +367,15 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         return pc_profile
     # end pitch_class_from_chord_token
 
+    def to_category(self, x, thresholds):
+        if x <= thresholds[0]:
+            return [1,0,0,0]
+        elif x < thresholds[1]:
+            return [0,1,0,0]
+        else:
+            return [0,0,1,0]
+    # end to_category
+
     def compute_harmonic_rhythm_density(self, chord_token_ids):
         """
         Compute harmonic rhythm density: average number of chord changes
@@ -410,8 +419,9 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
 
         if not chord_counts:
             return 0.0  # no valid bars
-
-        return sum(chord_counts) / len(chord_counts)
+        
+        hrd = sum(chord_counts) / len(chord_counts)
+        return hrd, self.to_category(hrd, [1.0001, 1.5556])
     # end compute_harmonic_rhythm_density
 
     def compute_harmonic_complexity(self, chord_tokens):
@@ -446,7 +456,7 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         # Compute entropy (natural log)
         entropy = -np.sum(pitch_class_dist * np.log(pitch_class_dist + 1e-12))
 
-        return float(entropy)
+        return float(entropy), self.to_category(entropy, [1.8225, 1.9254])
     # end compute_harmonic_complexity
 
     def encode(
@@ -697,8 +707,8 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         # [0,1,0,0]: medium
         # [0,0,1,0]: high
         # [0,0,0,1]: no condition
-        h_rhythm = self.compute_harmonic_rhythm_density(chord_token_ids)
-        h_complexity = self.compute_harmonic_complexity(chord_tokens)
+        h_rhythm, r_cat = self.compute_harmonic_rhythm_density(chord_token_ids)
+        h_complexity, c_cat = self.compute_harmonic_complexity(chord_tokens)
 
         return {
             'input_tokens': chord_tokens,
@@ -707,11 +717,12 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
             'time_signature': ts_num_list + ts_den_list,
             'attention_mask': attention_mask,
             'skip_steps': skip_steps,
-            'melody_part':melody_part,
+            'melody_part': melody_part,
             'ql_per_quantum': ql_per_quantum,
             'back_interval': back_interval if normalize_tonality else None,
             'harmonic_rhythm_density': h_rhythm,
-            'harmonic_complexity': h_complexity
+            'harmonic_complexity': h_complexity,
+            'conditions': r_cat + c_cat
         }
     # end encode_musicXML
 
@@ -922,8 +933,8 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         # [0,1,0,0]: medium
         # [0,0,1,0]: high
         # [0,0,0,1]: no condition
-        h_rhythm = self.compute_harmonic_rhythm_density(chord_token_ids)
-        h_complexity = self.compute_harmonic_complexity(chord_tokens)
+        h_rhythm, r_cat = self.compute_harmonic_rhythm_density(chord_token_ids)
+        h_complexity, c_cat = self.compute_harmonic_complexity(chord_tokens)
 
         return {
             'input_tokens': chord_tokens,
@@ -936,7 +947,8 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
             'ql_per_quantum': ql_per_quantum,
             'back_interval': back_interval if normalize_tonality else None,
             'harmonic_rhythm_density': h_rhythm,
-            'harmonic_complexity': h_complexity
+            'harmonic_complexity': h_complexity,
+            'conditions': r_cat + c_cat
         }
     # end encode_MIDI
 
