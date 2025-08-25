@@ -818,17 +818,17 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
                 if 0 <= start < len(chord_tokens):
                     chord_tokens[start], chord_token_ids[start] = self.handle_chord_symbol(el)
                 if keep_durations:
-                    end = int(np.round( (el.offset + el.duration.quarterLength) / ql_per_quantum)) + 1
-                    if end < len(chord_tokens):
+                    end = int(np.round( (el.offset + el.duration.quarterLength) / ql_per_quantum) )# + 1
+                    if end < len(chord_tokens) and chord_tokens[end] is None:
                         chord_tokens[end] = '<nc>'
                         chord_token_ids[end] = self.vocab['<nc>']
-
+            
             # Propagate chord forward
             for i in range(1, len(chord_tokens)):
                 if chord_tokens[i] is None:
                     chord_tokens[i] = chord_tokens[i-1]
                     chord_token_ids[i] = chord_token_ids[i-1]
-
+            
             # Fill missing with <pad> or <nc>
             for i in range(len(chord_tokens)):
                 if chord_tokens[i] is None:
