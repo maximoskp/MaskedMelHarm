@@ -203,14 +203,41 @@ def greedy_token_by_token_generate(
         prev_logits = logits.clone()
 
 
-        # --- Greedy pick: unmask token with highest confidence ---
+        # # --- Greedy pick: unmask token with highest confidence ---
+        # masked_positions = (visible_harmony == mask_token_id).squeeze(0).nonzero(as_tuple=True)[0]
+        # if masked_positions.numel() == 0:
+        #     break
+
+        # masked_confidences = confidences[0, masked_positions]
+        # best_idx = masked_positions[torch.argmax(masked_confidences)].item()
+        # visible_harmony[0, best_idx] = predictions[0, best_idx]
+
+        # --- Sampling pick: unmask one token using top-k temperature sampling ---
         masked_positions = (visible_harmony == mask_token_id).squeeze(0).nonzero(as_tuple=True)[0]
         if masked_positions.numel() == 0:
             break
 
-        masked_confidences = confidences[0, masked_positions]
-        best_idx = masked_positions[torch.argmax(masked_confidences)].item()
-        visible_harmony[0, best_idx] = predictions[0, best_idx]
+        # Get logits only at masked positions
+        masked_logits = logits[0, masked_positions] / temperature  # (num_masked, vocab_size)
+
+        # For each masked position, find the most confident one (like greedy),
+        # but sample the actual token value with top-k sampling
+        masked_probs = torch.softmax(masked_logits, dim=-1)
+        masked_confidences, _ = torch.max(masked_probs, dim=-1)
+
+        # Pick the masked position with highest confidence
+        best_pos_idx = torch.argmax(masked_confidences).item()
+        pos = masked_positions[best_pos_idx].item()
+
+        # --- Top-k sampling at this position ---
+        k = min(10, masked_logits.size(-1))  # choose k (adjustable)
+        topk_logits, topk_indices = torch.topk(masked_logits[best_pos_idx], k)
+        topk_probs = torch.softmax(topk_logits, dim=-1)
+        sampled_idx = torch.multinomial(topk_probs, 1).item()
+        sampled_token = topk_indices[sampled_idx].item()
+
+        # Update visible_harmony with the sampled token
+        visible_harmony[0, pos] = sampled_token
 
         step += 1
 
@@ -353,7 +380,7 @@ def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_s
             continue
         
         offset = (i + skip_steps - num_bar_tokens) * ql_per_16th
-
+        
         # Decode mir_eval chord symbol to chord symbol object
         try:
             r, t, _ = mir_eval.chord.encode(mir_chord, reduce_extended_chords=True)
@@ -372,7 +399,7 @@ def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_s
                 break
         # bar = next((b for b in reversed(bars) if b.offset <= offset), None)
 
-        offset = (i + skip_steps) * ql_per_16th
+        offset = (i + skip_steps - num_bar_tokens) * ql_per_16th
         
         if bar:
             bar_start = bar.offset
@@ -519,7 +546,8 @@ def generate_files_with_base2(
         name_suffix,
         use_constraints=False,
         normalize_tonality=False,
-        num_stages=10
+        num_stages=10,
+        temperature=1.0
     ):
     pad_token_id = tokenizer.pad_token_id
     nc_token_id = tokenizer.nc_token_id
@@ -536,7 +564,7 @@ def generate_files_with_base2(
         conditioning_vec=conditioning_vec.to(model.device),
         num_stages=10,
         mask_token_id=tokenizer.mask_token_id,
-        temperature=1.0,
+        temperature=temperature,
         strategy='sample',
         pad_token_id=pad_token_id,      # token ID for <pad>
         nc_token_id=nc_token_id,       # token ID for <nc>
@@ -591,7 +619,8 @@ def generate_files_with_random(
         name_suffix,
         use_constraints=False,
         normalize_tonality=False,
-        num_stages=10
+        num_stages=10,
+        temperature=1.0
     ):
     pad_token_id = tokenizer.pad_token_id
     nc_token_id = tokenizer.nc_token_id
@@ -608,7 +637,7 @@ def generate_files_with_random(
         conditioning_vec=conditioning_vec.to(model.device),
         num_stages=num_stages,
         mask_token_id=tokenizer.mask_token_id,
-        temperature=1.0,
+        temperature=temperature,
         strategy='sample',
         pad_token_id=pad_token_id,      # token ID for <pad>
         nc_token_id=nc_token_id,       # token ID for <nc>
@@ -663,10 +692,12 @@ def generate_files_with_greedy(
         name_suffix,
         use_constraints=False,
         condition='time_signature',
+        force_condition=None,
         intertwine_bar_info=False, # no bar default
         trim_start=True, # no bar default
         normalize_tonality=False,
-        num_stages=10
+        num_stages=10,
+        temperature=1.0
     ):
     # we cannot have intertwine_bar_info == True and use_constraints == False
     # because bar information is passed through the constraints
@@ -691,6 +722,8 @@ def generate_files_with_greedy(
         harmony_input[ harmony_input != tokenizer.bar_token_id ] = tokenizer.mask_token_id
     melody_grid = torch.FloatTensor( input_encoded['pianoroll'] ).reshape( 1, input_encoded['pianoroll'].shape[0], input_encoded['pianoroll'].shape[1] )
     conditioning_vec = torch.FloatTensor( input_encoded[condition] ).reshape( 1, len(input_encoded[condition]) )
+    if force_condition is not None:
+        conditioning_vec = torch.FloatTensor( force_condition ).reshape( 1, len(force_condition) )
     
     random_generated_harmony, avg_diffs = greedy_token_by_token_generate(
         model=model,
@@ -699,7 +732,7 @@ def generate_files_with_greedy(
         num_stages=num_stages,
         mask_token_id=tokenizer.mask_token_id,
         bar_token_id=tokenizer.bar_token_id,
-        temperature=1.0,
+        temperature=temperature,
         pad_token_id=pad_token_id,      # token ID for <pad>
         nc_token_id=nc_token_id,       # token ID for <nc>
         force_fill=True,         # disallow <pad>/<nc> before melody ends
