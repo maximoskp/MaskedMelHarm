@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
-from train_utils import apply_structured_masking
-from music21 import harmony, stream, metadata, chord, note, key, meter, tempo, duration
+# from train_utils import apply_structured_masking
+from music21 import harmony, stream, metadata, chord, note, key, meter, tempo, duration, clef
 import mir_eval
 import numpy as np
 from copy import deepcopy
@@ -198,6 +198,341 @@ def structured_progressive_generate(
     return visible_harmony
 # end structured_progressive_generate
 
+
+def _typed_duration(ql):
+
+    d = duration.Duration(ql)
+    base = {4.0:'whole', 2.0:'half', 1.0:'quarter', 0.5:'eighth', 0.25:'16th', 0.125:'32nd'}
+    for dots in (0,1,2):
+        unit = ql / (2**dots)
+        if unit in base:
+            d.type = base[unit]
+            d.dots = dots
+            break
+    return d
+
+def _decode_token_to_chord(token):
+    # 'C:maj7' -> triad/7th (reduced extensions) as a Chord (absolute MIDI)
+    try:
+        r, t, _ = mir_eval.chord.encode(token, reduce_extended_chords=True)
+        pcs = r + np.where(t > 0)[0] + 48  # anchor roughly around C3
+        return chord.Chord(pcs.tolist())
+    except Exception:
+        return None
+
+def _voice_into_register(c: chord.Chord,
+                         low=45, high=65,   # A2–F4 default register for a LH staff
+                         last_bass: int | None = None) -> chord.Chord:
+    """
+    Put chord into closed position and choose an octave placement (k*12)
+    that keeps it inside [low, high] and is as close as possible to the
+    previous chord’s bass (if any).
+    """
+    # closed stack within one octave
+    c = chord.Chord([p.midi for p in c.pitches])
+    c.closedPosition(inPlace=True)
+
+    def span(ch):
+        mids = [p.midi for p in ch.pitches]
+        return min(mids), max(mids)
+
+    best = None
+    bestDist = None
+    # try several octave shifts and pick the closest, in range
+    for k in range(-3, 4):
+        cand = c.transpose(12 * k, inPlace=False)
+        lo, hi = span(cand)
+        if lo < low or hi > high:
+            continue
+        bass = lo
+        dist = 0 if last_bass is None else abs(bass - last_bass)
+        if best is None or dist < bestDist:
+            best, bestDist = cand, dist
+
+    # if nothing fit, just clamp roughly by dragging into range
+    if best is None:
+        lo, hi = span(c)
+        while lo < low:
+            c = c.transpose(12, inPlace=False)
+            lo, hi = span(c)
+        while hi > high:
+            c = c.transpose(-12, inPlace=False)
+            lo, hi = span(c)
+        best = c
+
+    return best
+
+def _force_bass_clef(part: stream.Part):
+    """
+    Make sure the part shows a Bass clef at the start.
+    - Remove ALL existing clefs (including mid-score changes).
+    - Ensure measures exist.
+    - Insert a Bass clef in MEASURE 1 at offset 0.
+    """
+    # remove all clefs
+    for c in list(part.recurse().getElementsByClass(clef.Clef)):
+        parent = c.getContextByClass(stream.Measure)
+        (parent or part).remove(c)
+
+    # ensure we have measures
+    if not part.getElementsByClass(stream.Measure):
+        part.makeMeasures(inPlace=True)
+
+    m1 = part.measure(1)
+    if m1 is None:  # very defensive
+        part.makeMeasures(inPlace=True)
+        m1 = part.measure(1)
+
+    # insert the clef INSIDE measure 1 at 0.0
+    m1.insert(0.0, clef.BassClef())
+
+def _apply_keyed_accidentals(score: stream.Score) -> stream.Score:
+    """
+    Normalize enharmonics toward the part's key and recompute accidental display.
+    Works on both Note and Chord elements. Compatible with older music21 versions.
+    """
+    for p in score.parts:
+        # 1) ensure a KeySignature exists (infer if missing)
+        ks_stream = p.recurse().getElementsByClass(key.KeySignature)
+        if not ks_stream:
+            try:
+                inferred = p.analyze('key').asKeySignature()
+                p.insert(0, inferred)
+                ks_stream = [inferred]
+            except Exception:
+                ks_stream = []
+
+        # 2) respell enharmonics roughly toward the key's sharp/flat preference
+        prefer_sharps = True
+        if ks_stream:
+            prefer_sharps = ks_stream[0].sharps >= 0  # flats if negative
+
+        # visit both Note and Chord; if Chord, visit its member notes
+        for el in p.recurse().getElementsByClass((note.Note, chord.Chord)):
+            if isinstance(el, note.Note):
+                notes_iter = [el]
+            else:  # Chord
+                notes_iter = el.notes  # member Note objects
+
+            for n in notes_iter:
+                acc = n.pitch.accidental
+                if acc is None:
+                    continue
+                # steer enharmonic toward the key's preference
+                if prefer_sharps and acc.alter < 0:
+                    n.pitch = n.pitch.getEnharmonic()
+                elif not prefer_sharps and acc.alter > 0:
+                    n.pitch = n.pitch.getEnharmonic()
+
+        # 3) recompute accidental DISPLAY (try newest → oldest signatures)
+        try:
+            p.makeAccidentals(inPlace=True, overrideStatus=True, cautionaryAccidentals=False)
+        except TypeError:
+            try:
+                p.makeAccidentals(inPlace=True)
+            except TypeError:
+                p.makeAccidentals()
+
+    return score
+
+
+def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_steps):
+    """
+    Two-part score:
+      • melody_measures: original melody in measures
+      • chords_part: bar-aligned structure with voiced chords of full duration
+    If the melody is longer than the generated sequence, the score is cropped
+    to the last bar touched by the generated sequence.
+    """
+    EPS = 1e-9
+
+    # 1) measured copy of the melody
+    melody_measures = melody_part.makeMeasures(inPlace=False)
+
+    # 2) bar skeleton for chords (keep clef/time/key/tempo only)
+    chords_part = deepcopy(melody_measures)
+    chords_part.id = 'Harmonies'
+    for m in chords_part.getElementsByClass(stream.Measure):
+        for el in list(m):
+            if not isinstance(el, (key.KeySignature, meter.TimeSignature, tempo.MetronomeMark, clef.Clef)):
+                m.remove(el)
+
+    # 2) Force Bass Cleff
+    _force_bass_clef(chords_part)
+
+    # measure boundaries (absolute)
+    measures = list(chords_part.getElementsByClass(stream.Measure))
+    boundaries = [(m.offset, m.offset + m.barDuration.quarterLength, m) for m in measures]
+    if not boundaries:
+        sc = stream.Score()
+        sc.insert(0, melody_measures)
+        sc.insert(0, chords_part)
+        return sc
+
+    # 3) group contiguous runs of identical, meaningful tokens
+    tokens = list(generated_chords)
+    N = len(tokens)
+    runs, i = [], 0
+    while i < N:
+        tok = tokens[i]
+        if tok in ('<pad>', '<nc>'):
+            i += 1; continue
+        j = i + 1
+        while j < N and tokens[j] == tok:
+            j += 1
+        runs.append((tok, i, j))  # [i, j)
+        i = j
+
+    # 4) insert chords with full durations (clamped per bar) + register voicing
+    last_bass = None
+    for tok, i0, i1 in runs:
+        start_t = (i0 + skip_steps) * ql_per_16th
+        end_t   = (i1 + skip_steps) * ql_per_16th
+        if end_t <= start_t + EPS:
+            continue
+
+        proto = _decode_token_to_chord(tok)
+        if proto is None:
+            continue
+
+        # choose a voiced version for this run (near last bass)
+        voiced_template = _voice_into_register(proto, low=45, high=65, last_bass=last_bass)
+        last_bass = min(p.midi for p in voiced_template.pitches)
+
+        for b_start, b_end, meas in boundaries:
+            if b_end <= start_t or b_start >= end_t:
+                continue
+            seg_start = max(start_t, b_start)
+            seg_end   = min(end_t,   b_end)
+            seg_dur   = max(0.0, seg_end - seg_start)
+            if seg_dur <= EPS:
+                continue
+
+            # copy voiced template and set the segment duration
+            c = chord.Chord([p.midi for p in voiced_template.pitches])
+            c.duration = _typed_duration(seg_dur)
+            meas.insert(seg_start - b_start, c)
+
+    # 5) assemble result
+    score = stream.Score()
+    score.insert(0, melody_measures)
+    score.insert(0, chords_part)
+
+    # 6) crop to the last bar covered by generated sequence
+    if N > 0:
+        seq_end = (skip_steps + N) * ql_per_16th
+        last_idx = -1
+        for idx, (bs, _, _) in enumerate(boundaries):
+            if bs < seq_end - EPS:
+                last_idx = idx
+        if last_idx >= 0:
+            last_bar = measures[last_idx].measureNumber
+            score = score.measures(1, last_bar)
+
+    # 7) Fix accidentals
+    _apply_keyed_accidentals(score)
+
+    return score
+
+
+
+def overlay_generated_harmony_old(melody_part, generated_chords, ql_per_16th, skip_steps):
+    """
+    Build a two‐part Score:
+      • melody_measures: your original melody, in measures
+      • chords_part:   identical bar structure but empty, into which we
+                      insert one chord per bar (no ties)
+    """
+
+    # 1) Make your melody into a measured stream
+    melody_measures = melody_part.makeMeasures(inPlace=False)
+
+    # 2) Deep-copy that structure for harmony
+    chords_part = deepcopy(melody_measures)
+    chords_part.id = 'Harmonies'
+
+    # 2a) Strip out _all_ notes/chords from the copy, leaving only bars & sigs
+    for m in chords_part.getElementsByClass(stream.Measure):
+        for el in list(m):
+            if not isinstance(el, (key.KeySignature,
+                                   meter.TimeSignature,
+                                   tempo.MetronomeMark,
+                                   clef.Clef            # <-- keep any clef
+                                   )):
+                m.remove(el)
+
+    # 2b) Copy initial Key/Time/Tempo markings into chords_part
+    for el in melody_measures.recurse().getElementsByClass((key.KeySignature,
+                                                            meter.TimeSignature,
+                                                            tempo.MetronomeMark,
+                                                            clef.Clef)):
+        if el.offset == 0:
+            chords_part.insert(0, el)
+
+    # 3) Recompute offsets on melody_measures
+    cumulative = 0.0
+    measures_m = list(melody_measures.getElementsByClass(stream.Measure))
+    for m in measures_m:
+        m.offset = cumulative
+        cumulative += m.barDuration.quarterLength
+
+    #  ─── Build a [start,end,measure] list, but grab the measure _from_ chords_part ───
+    measures_c = list(chords_part.getElementsByClass(stream.Measure))
+    measure_boundaries = []
+    for m_m, m_c in zip(measures_m, measures_c):
+        start = m_m.offset
+        end   = start + m_m.barDuration.quarterLength
+        measure_boundaries.append((start, end, m_c))
+
+    # 4) Walk through generated_chords, group repeats, and insert one chord‐per‐bar
+    step = 0
+    N    = len(generated_chords)
+    while step < N:
+        token = generated_chords[step]
+        # skip <pad> and <nc>
+        if token in ('<pad>','<nc>'):
+            step += 1
+            continue
+
+        # find run of the same token
+        start = step
+        while step < N and generated_chords[step] == token:
+            step += 1
+        end = step
+
+        region_start = (start + skip_steps) * ql_per_16th
+        region_end   = (end   + skip_steps) * ql_per_16th
+
+        # insert into every bar that overlaps this region
+        for bar_start, bar_end, measure in measure_boundaries:
+            if bar_end <= region_start or bar_start >= region_end:
+                continue
+
+            seg_start  = max(region_start, bar_start)
+            seg_end    = min(region_end,   bar_end)
+            seg_dur    = seg_end - seg_start
+            seg_offset = seg_start - bar_start
+
+            # decode chord symbol → Chord object
+            try:
+                r, t, _ = mir_eval.chord.encode(token,
+                                                reduce_extended_chords=True)
+                pcs = r + np.where(t > 0)[0] + 48
+                c   = chord.Chord(pcs.tolist())
+            except Exception as e:
+                print(f"Skipping invalid chord {token}: {e}")
+                continue
+
+            c.quarterLength = seg_dur
+            measure.insert(seg_offset, c)
+
+    # 5) Assemble final Score
+    score = stream.Score()
+    score.insert(0, melody_measures)
+    score.insert(0, chords_part)
+    return score
+
+'''
 def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_steps):
     # create a part for chords in midi format
     # melody_part = melody_part.makeMeasures()
@@ -328,6 +663,7 @@ def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_s
 
     return score
 # end overlay_generated_harmony
+'''
 
 def save_harmonized_score(score, title="Harmonized Piece", out_path="harmonized.xml"):
     score.metadata = metadata.Metadata()
@@ -446,6 +782,13 @@ def generate_files_with_base2(
     harmony_real_tokens = []
     for t in harmony_real[0].tolist():
         harmony_real_tokens.append( tokenizer.ids_to_tokens[t] )
+
+    # ─────── DEBUG PRINT ───────────────────────────────────────────
+    print("Generated harmony tokens:")
+    print(gen_output_tokens)
+    print("Ground-truth harmony tokens:")
+    print(harmony_real_tokens)
+    # ────────────────────────────────────────────────────────────────
     
     gen_score = overlay_generated_harmony(
         input_encoded['melody_part'],

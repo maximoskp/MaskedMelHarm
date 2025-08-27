@@ -237,6 +237,111 @@ def stripRepeatsAndVoltas(score):
             if m: m.remove(r)
     return score
 
+
+def expand_clean_split_noRepeats(score, max_bars=16):
+    # 1) strip repeats/voltas (single pass)
+    noRep = stripRepeatsAndVoltas(score)
+
+    # 2) clean only redundant clef/time/key
+    for p in noRep.parts:
+        lastC = lastT = lastK = None
+        for m in p.getElementsByClass(m21.stream.Measure):
+            for c in list(m.getElementsByClass(m21.clef.Clef)):
+                sig = (c.__class__, c.sign, c.line, getattr(c, 'octaveChange', 0))
+                if sig == lastC: m.remove(c)
+                else:            lastC = sig
+            for ts in list(m.getElementsByClass(m21.meter.TimeSignature)):
+                if ts.ratioString == lastT: m.remove(ts)
+                else:                       lastT = ts.ratioString
+            for ks in list(m.getElementsByClass(m21.key.KeySignature)):
+                if ks.sharps == lastK: m.remove(ks)
+                else:                   lastK = ks.sharps
+
+    melody = noRep.parts[0]
+
+    # Helper: make a clean measures-based copy of any part,
+    # carrying clef/time/key from bar 1.
+    def normalize_part_to_measures(part_like):
+        part_like = part_like.flatten()
+        # copy bar-1 clef/time/key from melody so grids align
+        m1 = melody.measure(1)
+        for cls in (m21.clef.Clef, m21.meter.TimeSignature, m21.key.KeySignature):
+            for obj in list(part_like.recurse().getElementsByClass(cls)):
+                part_like.remove(obj)
+            ref = m1.getElementsByClass(cls)
+            if ref: part_like.insert(0, deepcopy(ref[0]))
+        return part_like.makeMeasures(inPlace=False)
+
+    # Detect symbols in melody
+    melody_symbols = list(melody.recurse().getElementsByClass(m21.harmony.ChordSymbol))
+
+    chords_part = None
+    has_second_part = len(noRep.parts) > 1
+
+    if has_second_part:
+        # Case A: keep existing plain-chord part as-is (normalize only).
+        # If it’s already real chords/notes, great; if it has chord symbols,
+        # you can choose to convert too, but per your spec we "leave as is".
+        existing = noRep.parts[1]
+        chords_part = normalize_part_to_measures(existing)
+
+        # Optional: if melody still has chord symbols, remove them
+        if melody_symbols:
+            for cs in list(melody.recurse().getElementsByClass(m21.harmony.ChordSymbol)):
+                pm = cs.getContextByClass(m21.stream.Measure)
+                if pm: pm.remove(cs)
+
+    else:
+        # Case B: no second part — if we do have ChordSymbols, create one.
+        if melody_symbols:
+            chords_part = m21.stream.Part()
+            chords_part.id = "Chords"
+            # seed clef/time/key so makeMeasures works
+            m1 = melody.measure(1)
+            for obj in m1.getElementsByClass((m21.clef.Clef, m21.meter.TimeSignature, m21.key.KeySignature)):
+                chords_part.insert(0, deepcopy(obj))
+
+            # convert chord symbols to real chords per measure
+            for meas in melody.getElementsByClass(m21.stream.Measure):
+                syms = sorted(meas.getElementsByClass(m21.harmony.ChordSymbol), key=lambda cs: cs.offset)
+                if not syms:
+                    continue
+                barQL   = meas.barDuration.quarterLength
+                mAbsOff = meas.offset
+                for idx, cs in enumerate(syms):
+                    startRel = cs.offset
+                    endRel   = syms[idx+1].offset if idx+1 < len(syms) else barQL
+                    durQL    = endRel - startRel
+                    absOff   = mAbsOff + startRel
+
+                    realC = m21.chord.Chord(cs.pitches)
+                    d = m21.duration.Duration(durQL)
+                    baseMap = {4.0:'whole', 2.0:'half', 1.0:'quarter', 0.5:'eighth', 0.25:'16th', 0.125:'32nd'}
+                    for dots in (0,1,2):
+                        unit = durQL / (2**dots)
+                        if unit in baseMap:
+                            d.type = baseMap[unit]; d.dots = dots; break
+                    realC.duration = d
+
+                    meas.remove(cs)                 # remove symbol from melody
+                    chords_part.insert(absOff, realC)
+
+            chords_part = chords_part.makeMeasures(inPlace=False)
+
+    # Assemble output score
+    out = m21.stream.Score()
+    out.insert(0, melody)                         # melody on top
+    if chords_part is not None:
+        out.insert(0, chords_part)                # chords below (2nd staff)
+
+    # Crop to 1..max_bars if requested
+    if max_bars is not None:
+        out = out.measures(1, max_bars)
+
+    return out
+
+
+'''
 def expand_clean_split_noRepeats(score, max_bars=16):
     """
     1) Strip repeats/voltas
@@ -376,7 +481,7 @@ def expand_clean_split_noRepeats(score, max_bars=16):
     if max_bars is not None:
         out = out.measures(1, max_bars)
     return out
-
+'''
 
 
 def load_example(fname):
