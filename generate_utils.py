@@ -291,6 +291,7 @@ def beam_token_by_token_generate(
             break
 
         candidates = []
+        print('entering beams==========================================')
         for visible_harmony, score, avg_diffs, prev_logits in beams:
             num_masked = (visible_harmony == mask_token_id).sum().item()
             num_unmasked = total_tokens - num_masked
@@ -336,13 +337,17 @@ def beam_token_by_token_generate(
 
             # Pick position with highest entropy
             # pos = masked_positions[torch.argmax(entropies)].item()
-            pos = masked_positions[torch.argmin(entropies)].item()
+            # pos = masked_positions[torch.argmin(entropies)].item()
+            pos = masked_positions[0].item()
 
             # --- Top-k sampling expansion ---
             masked_logits = logits[0, pos] / temperature
             topk_logits, topk_indices = torch.topk(masked_logits, min(top_k, masked_logits.size(-1)))
             topk_probs = torch.softmax(topk_logits, dim=-1)
-
+            print('---------------- pos: ', pos)
+            print(visible_harmony)
+            print(topk_indices)
+            print(topk_probs)
             for j in range(topk_indices.size(0)):
                 token = topk_indices[j].item()
                 token_prob = topk_probs[j].item()
@@ -594,7 +599,8 @@ def load_model(
     tokenizer=None,
     pianoroll_dim=100,
     total_stages=10,
-    conditioning_dim=16
+    conditioning_dim=16,
+    grid_length=256,
 ):
     if device_name == 'cpu':
         device = torch.device('cpu')
@@ -609,7 +615,8 @@ def load_model(
         device=device,
         conditioning_dim=conditioning_dim,
         pianoroll_dim=pianoroll_dim,
-        max_stages=total_stages
+        max_stages=total_stages,
+        grid_length=grid_length,
     )
     if curriculum_type == 'random':
         model_path = 'saved_models/' + subfolder + '/' + curriculum_type + str(total_stages) +  '.pt'

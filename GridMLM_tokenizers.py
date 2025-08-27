@@ -519,6 +519,8 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
             ql_per_quantum = 1 / 4
         elif self.quantization == '8th':
             ql_per_quantum = 1 / 2
+        elif self.quantization == '4th':
+            ql_per_quantum = 1
         elif self.quantization == '32nd':
             ql_per_quantum = 1 / 8
         else: # assume 16th
@@ -548,7 +550,7 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
                         break
             skip_steps = int(np.round(measure_start_offset / ql_per_quantum))
 
-        # Determine total length in 16th notes
+        # Determine total length in quantum length notes
         total_duration_q = melody_part.highestTime
         total_steps = int(np.ceil(total_duration_q / ql_per_quantum))
 
@@ -559,9 +561,9 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
 
         # Fill pianoroll
         for el in melody_part.notesAndRests:
-            start = int(np.round(el.offset / ql_per_quantum))
-            dur_steps = int(np.round(el.quarterLength / ql_per_quantum))
-
+            start = int(np.floor(el.offset / ql_per_quantum))
+            dur_steps = int(np.ceil(el.quarterLength / ql_per_quantum))
+            
             if isinstance(el, note.Note):
                 midi = el.pitch.midi
                 if midi in pitch_range:
@@ -578,11 +580,11 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         # Fill chord grid
         if chords_part is None:
             for el in melody_part.recurse().getElementsByClass(harmony.ChordSymbol):
-                start = int(np.round(el.offset / ql_per_quantum))
+                start = int(np.floor(el.offset / ql_per_quantum))
                 if 0 <= start < len(chord_tokens):
                     chord_tokens[start], chord_token_ids[start] = self.handle_chord_symbol(el)
                 if keep_durations:
-                    end = int(np.round( (el.offset + el.duration.quarterLength) / ql_per_quantum)) + 1
+                    end = int(np.ceil( (el.offset + el.duration.quarterLength) / ql_per_quantum)) + 1
                     if end < len(chord_tokens):
                         chord_tokens[end] = '<nc>'
                         chord_token_ids[end] = self.vocab['<nc>']
@@ -759,6 +761,8 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
             ql_per_quantum = 1 / 4
         elif self.quantization == '8th':
             ql_per_quantum = 1 / 2
+        elif self.quantization == '4th':
+            ql_per_quantum = 1
         elif self.quantization == '32nd':
             ql_per_quantum = 1 / 8
         else: # assume 16th
@@ -784,7 +788,7 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
                         break
             skip_steps = int(np.round(measure_start_offset / ql_per_quantum))
 
-        # Determine total length in 16th notes
+        # Determine total length in quantum length notes
         total_duration_q = melody_part.highestTime
         total_steps = int(np.ceil(total_duration_q / ql_per_quantum))
 
@@ -795,9 +799,9 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
 
         # Fill pianoroll
         for el in melody_part.notesAndRests:
-            start = int(np.round(el.offset / ql_per_quantum))
-            dur_steps = int(np.round(el.quarterLength / ql_per_quantum))
-
+            start = int(np.floor(el.offset / ql_per_quantum))
+            dur_steps = int(np.ceil(el.quarterLength / ql_per_quantum))
+            
             if isinstance(el, note.Note):
                 midi = el.pitch.midi
                 if midi in pitch_range:
@@ -814,11 +818,11 @@ class CSGridMLMTokenizer(PreTrainedTokenizer):
         # Fill chord grid
         if chords_part is not None:
             for el in chords_part.recurse().getElementsByClass(chord.Chord):
-                start = int(np.round(el.offset / ql_per_quantum))
+                start = int(np.floor(el.offset / ql_per_quantum))
                 if 0 <= start < len(chord_tokens):
                     chord_tokens[start], chord_token_ids[start] = self.handle_chord_symbol(el)
                 if keep_durations:
-                    end = int(np.round( (el.offset + el.duration.quarterLength) / ql_per_quantum) )# + 1
+                    end = int(np.ceil( (el.offset + el.duration.quarterLength) / ql_per_quantum) )# + 1
                     if end < len(chord_tokens) and chord_tokens[end] is None:
                         chord_tokens[end] = '<nc>'
                         chord_token_ids[end] = self.vocab['<nc>']

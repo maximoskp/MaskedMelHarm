@@ -8,103 +8,103 @@ import torch.nn.functional as F
 from tqdm import tqdm
 import pickle
 
-def extract_lead_sheet_info(xml_path, quantization='16th', fixed_length=None):
-    # Load the score and flatten
-    score = converter.parse(xml_path)
-    melody_part = score.parts[0].flat
+# def extract_lead_sheet_info(xml_path, quantization='16th', fixed_length=None):
+#     # Load the score and flatten
+#     score = converter.parse(xml_path)
+#     melody_part = score.parts[0].flat
 
-    # Define 16th note length
-    ql_per_16th = 0.25 / 4
+#     # Define 16th note length
+#     ql_per_16th = 0.25 / 4
 
-    # Get pitch range: MIDI 21 (A0) to 108 (C8) -> 88 notes
-    pitch_range = list(range(21, 109))
-    n_pitch = len(pitch_range)
+#     # Get pitch range: MIDI 21 (A0) to 108 (C8) -> 88 notes
+#     pitch_range = list(range(21, 109))
+#     n_pitch = len(pitch_range)
 
-    # Step 1: Find first chord symbol and bar to trim before it
-    first_chord_offset = None
-    for el in melody_part.recurse().getElementsByClass(harmony.ChordSymbol):
-        first_chord_offset = el.offset
-        break
+#     # Step 1: Find first chord symbol and bar to trim before it
+#     first_chord_offset = None
+#     for el in melody_part.recurse().getElementsByClass(harmony.ChordSymbol):
+#         first_chord_offset = el.offset
+#         break
 
-    measure_start_offset = 0.0
-    if first_chord_offset is not None:
-        for meas in melody_part.getElementsByClass(stream.Measure):
-            if meas.offset <= first_chord_offset < meas.offset + meas.duration.quarterLength:
-                measure_start_offset = meas.offset
-                break
+#     measure_start_offset = 0.0
+#     if first_chord_offset is not None:
+#         for meas in melody_part.getElementsByClass(stream.Measure):
+#             if meas.offset <= first_chord_offset < meas.offset + meas.duration.quarterLength:
+#                 measure_start_offset = meas.offset
+#                 break
 
-    skip_steps = int(np.round(measure_start_offset / ql_per_16th))
+#     skip_steps = int(np.round(measure_start_offset / ql_per_16th))
 
-    # Determine total length in 16th notes
-    total_duration_q = melody_part.highestTime
-    total_steps = int(np.ceil(total_duration_q / ql_per_16th))
+#     # Determine total length in 16th notes
+#     total_duration_q = melody_part.highestTime
+#     total_steps = int(np.ceil(total_duration_q / ql_per_16th))
 
-    # Allocate raw matrices (we will trim/pad later)
-    raw_pianoroll = np.zeros((total_steps, n_pitch), dtype=np.uint8)
-    raw_chords = [None] * total_steps
+#     # Allocate raw matrices (we will trim/pad later)
+#     raw_pianoroll = np.zeros((total_steps, n_pitch), dtype=np.uint8)
+#     raw_chords = [None] * total_steps
 
-    # Fill pianoroll
-    for el in melody_part.notesAndRests:
-        start = int(np.round(el.offset / ql_per_16th))
-        dur_steps = int(np.round(el.quarterLength / ql_per_16th))
+#     # Fill pianoroll
+#     for el in melody_part.notesAndRests:
+#         start = int(np.round(el.offset / ql_per_16th))
+#         dur_steps = int(np.round(el.quarterLength / ql_per_16th))
 
-        if isinstance(el, note.Note):
-            midi = el.pitch.midi
-            if midi in pitch_range:
-                idx = pitch_range.index(midi)
-                raw_pianoroll[start:start+dur_steps, idx] = 1
+#         if isinstance(el, note.Note):
+#             midi = el.pitch.midi
+#             if midi in pitch_range:
+#                 idx = pitch_range.index(midi)
+#                 raw_pianoroll[start:start+dur_steps, idx] = 1
 
-        elif isinstance(el, chord.Chord):  # Just in case
-            for pitch in el.pitches:
-                midi = pitch.midi
-                if midi in pitch_range:
-                    idx = pitch_range.index(midi)
-                    raw_pianoroll[start:start+dur_steps, idx] = 1
+#         elif isinstance(el, chord.Chord):  # Just in case
+#             for pitch in el.pitches:
+#                 midi = pitch.midi
+#                 if midi in pitch_range:
+#                     idx = pitch_range.index(midi)
+#                     raw_pianoroll[start:start+dur_steps, idx] = 1
 
-    # Fill chord grid
-    for el in melody_part.recurse().getElementsByClass(harmony.ChordSymbol):
-        start = int(np.round(el.offset / ql_per_16th))
-        if 0 <= start < len(raw_chords):
-            raw_chords[start] = el.figure
+#     # Fill chord grid
+#     for el in melody_part.recurse().getElementsByClass(harmony.ChordSymbol):
+#         start = int(np.round(el.offset / ql_per_16th))
+#         if 0 <= start < len(raw_chords):
+#             raw_chords[start] = el.figure
 
-    # Propagate chord forward
-    for i in range(1, len(raw_chords)):
-        if raw_chords[i] is None:
-            raw_chords[i] = raw_chords[i-1]
+#     # Propagate chord forward
+#     for i in range(1, len(raw_chords)):
+#         if raw_chords[i] is None:
+#             raw_chords[i] = raw_chords[i-1]
 
-    # Fill missing with <pad> or <nc>
-    for i in range(len(raw_chords)):
-        if raw_chords[i] is None:
-            raw_chords[i] = "<nc>"  # Or use "<pad>" if preferred
+#     # Fill missing with <pad> or <nc>
+#     for i in range(len(raw_chords)):
+#         if raw_chords[i] is None:
+#             raw_chords[i] = "<nc>"  # Or use "<pad>" if preferred
 
-    # Trim to start at first chord bar
-    raw_pianoroll = raw_pianoroll[skip_steps:]
-    raw_chords = raw_chords[skip_steps:]
+#     # Trim to start at first chord bar
+#     raw_pianoroll = raw_pianoroll[skip_steps:]
+#     raw_chords = raw_chords[skip_steps:]
 
-    # Add pitch class profile (top 12 dims)
-    n_steps = len(raw_pianoroll)
-    pitch_classes = np.zeros((n_steps, 12), dtype=np.uint8)
-    for i in range(n_steps):
-        pitch_indices = np.where(raw_pianoroll[i] > 0)[0]
-        for idx in pitch_indices:
-            midi = pitch_range[idx]
-            pitch_classes[i, midi % 12] = 1
-    full_pianoroll = np.hstack([pitch_classes, raw_pianoroll])  # Shape: (T, 12 + 88)
+#     # Add pitch class profile (top 12 dims)
+#     n_steps = len(raw_pianoroll)
+#     pitch_classes = np.zeros((n_steps, 12), dtype=np.uint8)
+#     for i in range(n_steps):
+#         pitch_indices = np.where(raw_pianoroll[i] > 0)[0]
+#         for idx in pitch_indices:
+#             midi = pitch_range[idx]
+#             pitch_classes[i, midi % 12] = 1
+#     full_pianoroll = np.hstack([pitch_classes, raw_pianoroll])  # Shape: (T, 12 + 88)
 
-    # Apply fixed length (pad or trim)
-    if fixed_length is not None:
-        if n_steps > fixed_length:
-            full_pianoroll = full_pianoroll[:fixed_length]
-            raw_chords = raw_chords[:fixed_length]
-        elif n_steps < fixed_length:
-            pad_len = fixed_length - n_steps
-            pad_pr = np.zeros((pad_len, full_pianoroll.shape[1]), dtype=np.uint8)
-            pad_ch = ["<pad>"] * pad_len
-            full_pianoroll = np.vstack([full_pianoroll, pad_pr])
-            raw_chords += pad_ch
+#     # Apply fixed length (pad or trim)
+#     if fixed_length is not None:
+#         if n_steps > fixed_length:
+#             full_pianoroll = full_pianoroll[:fixed_length]
+#             raw_chords = raw_chords[:fixed_length]
+#         elif n_steps < fixed_length:
+#             pad_len = fixed_length - n_steps
+#             pad_pr = np.zeros((pad_len, full_pianoroll.shape[1]), dtype=np.uint8)
+#             pad_ch = ["<pad>"] * pad_len
+#             full_pianoroll = np.vstack([full_pianoroll, pad_pr])
+#             raw_chords += pad_ch
 
-    return full_pianoroll, raw_chords
-#  end extract_lead_sheet_info
+#     return full_pianoroll, raw_chords
+# #  end extract_lead_sheet_info
 
 def compute_normalized_token_entropy(logits, target_ids, pad_token_id=None):
     """
@@ -152,7 +152,7 @@ class CSGridMLMDataset(Dataset):
         self,
         root_dir,
         tokenizer,
-        fixed_length=512,
+        # fixed_length=512,
         frontloading=True,
         refrontload=False,
         name_suffix='MLMH'
@@ -165,7 +165,7 @@ class CSGridMLMDataset(Dataset):
                     full_path = os.path.join(dirpath, file)
                     self.data_files.append(full_path)
         self.tokenizer = tokenizer
-        self.fixed_length = fixed_length
+        # self.fixed_length = fixed_length
         self.frontloading = frontloading
         if self.frontloading:
             # check if file exists and load it
