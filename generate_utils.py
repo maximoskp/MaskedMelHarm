@@ -258,7 +258,8 @@ def beam_token_by_token_generate(
         chord_constraints=None, # chord + bar constraints
         max_steps=None,         # optional limit on number of iterations
         beam_size=5,            # number of beams to keep
-        top_k=5                 # number of candidates per expansion
+        top_k=5,                # number of candidates per expansion
+        unmasking_order='random' # in ['random', 'start', 'end', 'certain', 'uncertain']
     ):
     device = melody_grid.device
     seq_len = melody_grid.shape[1]
@@ -291,7 +292,7 @@ def beam_token_by_token_generate(
             break
 
         candidates = []
-        print('entering beams==========================================')
+        # print('entering beams==========================================')
         for visible_harmony, score, avg_diffs, prev_logits in beams:
             num_masked = (visible_harmony == mask_token_id).sum().item()
             num_unmasked = total_tokens - num_masked
@@ -329,25 +330,40 @@ def beam_token_by_token_generate(
             if masked_positions.numel() == 0:
                 candidates.append((visible_harmony, score, avg_diffs, logits.clone()))
                 continue
-            # pos = masked_positions[torch.randint(0, masked_positions.numel(), (1,))].item()
             # Compute entropies over masked positions
             probs = torch.softmax(logits[0, masked_positions] / temperature, dim=-1)
             masked_probs = probs  # (num_masked, vocab_size)
             entropies = -(masked_probs * masked_probs.clamp_min(1e-9).log()).sum(dim=-1)
 
-            # Pick position with highest entropy
-            # pos = masked_positions[torch.argmax(entropies)].item()
-            # pos = masked_positions[torch.argmin(entropies)].item()
-            pos = masked_positions[0].item()
+            if unmasking_order == 'random':
+                # pick position at random
+                pos = masked_positions[torch.randint(0, masked_positions.numel(), (1,))].item()
+            elif unmasking_order == 'uncertain':
+                # Pick position with highest entropy
+                pos = masked_positions[torch.argmax(entropies)].item()
+            elif unmasking_order == 'certain':
+                # Pick position with lowest entropy
+                pos = masked_positions[torch.argmin(entropies)].item()
+            elif unmasking_order == 'start':
+                # pick position from start to end
+                pos = masked_positions[0].item()
+            elif unmasking_order == 'end':
+                # pick position from end to start
+                pos = masked_positions[-1].item()
+            else:
+                print('Unknown unmasking order: ', unmasking_order, '. Doing random.')
+                # pick position at random
+                pos = masked_positions[torch.randint(0, masked_positions.numel(), (1,))].item()
+
 
             # --- Top-k sampling expansion ---
             masked_logits = logits[0, pos] / temperature
             topk_logits, topk_indices = torch.topk(masked_logits, min(top_k, masked_logits.size(-1)))
             topk_probs = torch.softmax(topk_logits, dim=-1)
-            print('---------------- pos: ', pos)
-            print(visible_harmony)
-            print(topk_indices)
-            print(topk_probs)
+            # print('---------------- pos: ', pos)
+            # print(visible_harmony)
+            # print(topk_indices)
+            # print(topk_probs)
             for j in range(topk_indices.size(0)):
                 token = topk_indices[j].item()
                 token_prob = topk_probs[j].item()
@@ -919,7 +935,8 @@ def generate_files_with_beam(
         num_stages=10,
         temperature=1.0,
         beam_size=5,
-        top_k=5
+        top_k=5,
+        unmasking_order='random'
     ):
     # we cannot have intertwine_bar_info == True and use_constraints == False
     # because bar information is passed through the constraints
@@ -959,8 +976,9 @@ def generate_files_with_beam(
         nc_token_id=nc_token_id,       # token ID for <nc>
         force_fill=True,         # disallow <pad>/<nc> before melody ends
         chord_constraints = harmony_input.to(model.device) if use_constraints or intertwine_bar_info else None,
-        beam_size=5,
-        top_k=5
+        beam_size=beam_size,
+        top_k=top_k,
+        unmasking_order=unmasking_order
     )
     gen_output_tokens = []
     for t in random_generated_harmony[0].tolist():
