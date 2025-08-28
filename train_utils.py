@@ -8,13 +8,66 @@ import csv
 import numpy as np
 import os
 from transformers import get_cosine_schedule_with_warmup
-# TODO:
-# validation loop
-# save model
-# write results to excel
-# integrate compute_normalized_token_entropy and perplexity
 
 perplexity_metric = Perplexity(ignore_index=-100)
+
+def single_step_progressive_masking(
+        harmony_tokens,
+        total_stages,
+        mask_token_id,
+        stage_in=None,
+        bar_token_id=None
+    ):
+    """
+    Generate visible input and denoising target for diffusion-style training.
+    Visible tokens are always one fewer than the target ones.
+
+    Args:
+        harmony_tokens (torch.Tensor): Tensor of shape (B, L) containing target harmony token ids.
+        stage (int): Current training stage (0 to total_stages - 1).
+        mask_token_id (int): The token ID used to mask hidden positions in visible_harmony.
+        device (str or torch.device): Target device.
+
+    Returns:
+        visible_harmony (torch.Tensor): Tensor of shape (B, L) with visible tokens (others masked).
+        denoising_target (torch.Tensor): Tensor of shape (B, L) with tokens to predict (others = -100).
+        stage_indices (torch.Tensor): Tensor of shape (B, 1) with stage per batch item.
+        target_indices (torch.Tensor): Tensor of shape (B, 1) with target index per batch item.
+    """
+    device = harmony_tokens.device
+    B, L = harmony_tokens.shape
+    total_stages = L # denominator later, make sure there is at least one left
+
+    visible_harmony = torch.full_like(harmony_tokens, fill_value=mask_token_id)
+    denoising_target = torch.full_like(harmony_tokens, fill_value=-100)  # -100 is ignored by CrossEntropyLoss
+
+    if bar_token_id is not None:
+        # Create a mask for bar token positions
+        bar_mask = (harmony_tokens == bar_token_id)
+        # Put bar tokens in visible_harmony (always unmasked)
+        visible_harmony[bar_mask] = bar_token_id
+        # Also include them in the denoising target (so model predicts them too)
+        denoising_target[bar_mask] = bar_token_id
+    
+    stage_indices = torch.randint(0, total_stages, (B,), device=device)
+    target_indices = torch.zeros((B,), device=device)
+    for b in range(B):
+        stage = stage_indices[b] if stage_in is None else stage_in
+
+        percent_visible = stage / total_stages
+        perm = torch.randperm(L, device=device)
+        num_visible = int(L * percent_visible)
+        num_predict = 1
+
+        visible_idx = perm[:num_visible]
+        predict_idx = perm[:num_visible + num_predict]  # predict includes visible + next unmasked tokens
+        target_indices[b] = predict_idx[-1]
+
+        visible_harmony[b, visible_idx] = harmony_tokens[b, visible_idx]
+        denoising_target[b, predict_idx] = harmony_tokens[b, predict_idx]
+
+    return visible_harmony, denoising_target, stage_indices, target_indices
+# end single_step_progressive_masking
 
 def random_progressive_masking(
         harmony_tokens,
@@ -125,6 +178,13 @@ def apply_masking(
                 mask_token_id,
                 stage
             )
+    elif curriculum_type == 'step':
+        return single_step_progressive_masking(
+                harmony_tokens,
+                total_stages,
+                mask_token_id,
+                stage
+            )
 # end apply_masking
 
 def apply_structured_masking(harmony_tokens,
@@ -219,8 +279,65 @@ def get_stage_uniform(epoch, max_epoch, max_stage):
     return np.random.randint(max_stage + 1)
 # end get_stage_uniform
 
-def validation_loop(model, valloader, mask_token_id, bar_token_id, condition, loss_fn, \
-                    epoch, step, \
+import torch
+
+def apply_focal_sharpness(
+        melody_grid,
+        target_indices,
+        focal_sharpness,
+        min_sigma=1.0,
+        max_sigma=40.0
+    ):
+    """
+    Apply Gaussian attenuation around a focal index per sequence.
+    
+    Args:
+        melody_grid: [B, L, dm] tensor (batch of pianorolls)
+        target_indices: [B, 1] tensor with focal indices in [0, L-1]
+        focal_sharpness: [B, 1] tensor with values in [0,1]
+        min_sigma, max_sigma: range for Gaussian variance mapping
+    
+    Returns:
+        attenuated_grid: [B, L, dm] tensor
+    """
+    B, L, dm = melody_grid.shape
+
+    # Map sharpness [0,1] -> sigma [max_sigma, min_sigma]
+    # low sharpness = wide Gaussian (large sigma), high sharpness = narrow Gaussian (small sigma)
+    sigma = max_sigma - focal_sharpness * (max_sigma - min_sigma)  # [B,1]
+
+    # Create positions [0..L-1]
+    positions = torch.arange(L, device=melody_grid.device).unsqueeze(0).expand(B, L)  # [B, L]
+
+    # Expand focal indices
+    # make sure that target_indices is the correct shape
+    if target_indices.dim() == 1:          # shape [B]
+        target_indices = target_indices.unsqueeze(-1)  # [B,1]
+    elif target_indices.dim() == 2 and target_indices.shape[0] == 1:  
+        # case: [1,B] -> transpose to [B,1]
+        target_indices = target_indices.t()
+    focal = target_indices.expand(-1, L)  # [B, L]
+
+    # Compute squared distance
+    dist2 = (positions - focal).float() ** 2  # [B, L]
+
+    # Compute Gaussian weights: exp(-d^2 / (2σ^2))
+    weights = torch.exp(-dist2 / (2 * sigma**2))  # [B, L]
+
+    # Normalize weights (optional, keeps focal=1 and remote->0 without collapsing scale)
+    weights = weights / weights.max(dim=1, keepdim=True).values
+
+    # Expand to match pianoroll dims
+    weights = weights.unsqueeze(-1)  # [B, L, 1]
+
+    # Apply attenuation
+    attenuated_grid = melody_grid * weights
+
+    return attenuated_grid
+# end apply_focal_sharpness
+
+def validation_loop(model, valloader, mask_token_id, bar_token_id, condition, total_stages, \
+                    loss_fn, epoch, step, \
                     curriculum_type, train_loss, train_accuracy, \
                     train_perplexity, train_token_entropy,
                     best_val_loss, saving_version, results_path=None, transformer_path=None):
@@ -238,7 +355,7 @@ def validation_loop(model, valloader, mask_token_id, bar_token_id, condition, lo
         val_token_entropy = 0
         print('validation')
         with tqdm(valloader, unit='batch') as tepoch:
-            tepoch.set_description(f'Epoch {epoch}/{step}| val')
+            tepoch.set_description(f'Epoch {epoch}@{step}| val')
             for batch in tepoch:
                 perplexity_metric.reset()
                 melody_grid = batch["pianoroll"].to(device)           # (B, 256, 140)
@@ -246,13 +363,32 @@ def validation_loop(model, valloader, mask_token_id, bar_token_id, condition, lo
                 conditioning_vec = batch[condition].to(device)  # (B, C0)
                 
                 # Apply masking to harmony
-                harmony_input, harmony_target, stage_indices = apply_masking(
+                rets = apply_masking(
                     harmony_gt,
                     mask_token_id,
-                    total_stages=10,
+                    total_stages=total_stages,
                     curriculum_type=curriculum_type,
                     bar_token_id=bar_token_id
                 )
+
+                harmony_input, harmony_target, stage_indices = rets[0], rets[1], rets[2]
+                if curriculum_type == 'step':
+                    target_indices = rets[3]
+                    # focal point on melody_grid
+                    B = melody_grid.shape[0]
+                    focal_sharpness = torch.rand(B, 1, device=melody_grid.device)  # values in [0,1]
+                    melody_grid = apply_focal_sharpness(
+                        melody_grid,
+                        target_indices,
+                        focal_sharpness
+                    )
+                    # also integrate focal_sharpness to conditioning_vec
+                    # Ensure focal_sharpness has right shape
+                    if focal_sharpness.dim() == 1:
+                        focal_sharpness = focal_sharpness.unsqueeze(-1)  # [B] -> [B,1]
+                    
+                    # Concatenate along feature dimension
+                    conditioning_vec = torch.cat([conditioning_vec, focal_sharpness], dim=-1)
 
                 # Forward pass
                 logits = model(
@@ -271,7 +407,7 @@ def validation_loop(model, valloader, mask_token_id, bar_token_id, condition, lo
                 val_loss = running_loss/batch_num
                 # accuracy
                 predictions = logits.argmax(dim=-1)
-                mask = harmony_target != -100
+                mask = harmony_target != harmony_input # harmony_target != -100
                 running_accuracy += (predictions[mask] == harmony_target[mask]).sum().item()/mask.sum().item()
                 val_accuracy = running_accuracy/batch_num
                 # perplexity
@@ -348,7 +484,7 @@ def train_with_curriculum(
         train_token_entropy = 0
         
         with tqdm(trainloader, unit='batch') as tepoch:
-            tepoch.set_description(f'Epoch {epoch}/{step} | trn')
+            tepoch.set_description(f'Epoch {epoch}@{step} | trn')
             for batch in tepoch:
                 perplexity_metric.reset()
                 model.train()
@@ -372,7 +508,7 @@ def train_with_curriculum(
                             conditioning_vec[idx, 7] = 1
 
                 # Apply masking to harmony
-                harmony_input, harmony_target, stage_indices = apply_masking(
+                rets = apply_masking(
                     harmony_gt,
                     mask_token_id,
                     total_stages=total_stages,
@@ -380,6 +516,25 @@ def train_with_curriculum(
                     bar_token_id=bar_token_id
                 )
 
+                harmony_input, harmony_target, stage_indices = rets[0], rets[1], rets[2]
+                if curriculum_type == 'step':
+                    target_indices = rets[3]
+                    # focal point on melody_grid
+                    B = melody_grid.shape[0]
+                    focal_sharpness = torch.rand(B, 1, device=melody_grid.device)  # values in [0,1]
+                    melody_grid = apply_focal_sharpness(
+                        melody_grid,
+                        target_indices,
+                        focal_sharpness
+                    )
+                    # also integrate focal_sharpness to conditioning_vec
+                    # Ensure focal_sharpness has right shape
+                    if focal_sharpness.dim() == 1:
+                        focal_sharpness = focal_sharpness.unsqueeze(-1)  # [B] -> [B,1]
+                    
+                    # Concatenate along feature dimension
+                    conditioning_vec = torch.cat([conditioning_vec, focal_sharpness], dim=-1)
+                
                 # Forward pass
                 logits = model(
                     conditioning_vec.to(device),
@@ -402,7 +557,7 @@ def train_with_curriculum(
                 train_loss = running_loss/batch_num
                 # accuracy
                 predictions = logits.argmax(dim=-1)
-                mask = harmony_target != -100
+                mask = harmony_target != harmony_input # harmony_target != -100
                 running_accuracy += (predictions[mask] == harmony_target[mask]).sum().item()/mask.sum().item()
                 train_accuracy = running_accuracy/batch_num
                 # perplexity
@@ -422,6 +577,7 @@ def train_with_curriculum(
                         mask_token_id,
                         bar_token_id,
                         condition,
+                        total_stages,
                         loss_fn,
                         epoch,
                         step,

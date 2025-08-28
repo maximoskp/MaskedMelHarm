@@ -10,7 +10,7 @@ from torch.nn import CrossEntropyLoss
 import argparse
 from train_utils import train_with_curriculum
 
-curriculum_types = ['random', 'base2']
+curriculum_types = ['random', 'base2', 'step']
 
 def main():
 
@@ -33,6 +33,8 @@ def main():
     curriculum_type = args.curriculum
     total_stages = 10
     if args.total_stages and curriculum_type == 'random':
+        total_stages = args.total_stages
+    elif args.total_stages and curriculum_type == 'step':
         total_stages = args.total_stages
     subfolder = ''
     if args.subfolder:
@@ -99,7 +101,7 @@ def main():
     train_with_curriculum(
         model, optimizer, trainloader, valloader, loss_fn, tokenizer.mask_token_id,
         epochs=epochs,
-        curriculum_type=curriculum_type,  # 'random', 'base2'
+        curriculum_type=curriculum_type,  # 'random', 'base2', 'step'
         total_stages=total_stages,
         results_path=results_path,
         transformer_path=transformer_path,

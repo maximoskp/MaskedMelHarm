@@ -34,6 +34,8 @@ def main():
     total_stages = 10
     if args.total_stages and curriculum_type == 'random':
         total_stages = args.total_stages
+    elif args.total_stages and curriculum_type == 'step':
+        total_stages = args.total_stages
     subfolder = ''
     if args.subfolder:
         subfolder = args.subfolder
@@ -75,7 +77,7 @@ def main():
         device=device,
         grid_length=80,
         max_stages=total_stages,
-        conditioning_dim=8,
+        conditioning_dim=8 + (curriculum_type == 'step'),
         pianoroll_dim=tokenizer.pianoroll_dim,
     )
     model.to(device)

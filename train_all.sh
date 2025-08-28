@@ -29,7 +29,8 @@
 scripts=(
     "train_qt_bar_gmlm.py -c random -s 10 -f CA -d /media/maindisk/data/hooktheory_midi_hr/CA_train -v /media/maindisk/data/hooktheory_midi_hr/CA_test -g 0 -e 50 -l 1e-4 -b 32"
     "train_qt_bar_gmlm.py -c random -s 20 -f CA -d /media/maindisk/data/hooktheory_midi_hr/CA_train -v /media/maindisk/data/hooktheory_midi_hr/CA_test -g 1 -e 50 -l 1e-4 -b 32"
-    "train_qt_bar_gmlm.py -c random -s 64 -f CA -d /media/maindisk/data/hooktheory_midi_hr/CA_train -v /media/maindisk/data/hooktheory_midi_hr/CA_test -g 2 -e 50 -l 1e-4 -b 32"
+    "train_qt_bar_gmlm.py -c random -s 80 -f CA -d /media/maindisk/data/hooktheory_midi_hr/CA_train -v /media/maindisk/data/hooktheory_midi_hr/CA_test -g 2 -e 50 -l 1e-4 -b 32"
+    "train_qt_bar_gmlm.py -c step -s 80 -f CA -d /media/maindisk/data/hooktheory_midi_hr/CA_train -v /media/maindisk/data/hooktheory_midi_hr/CA_test -g 2 -e 50 -l 1e-4 -b 32"
 )
 
 # Name of the conda environment
