@@ -279,8 +279,6 @@ def get_stage_uniform(epoch, max_epoch, max_stage):
     return np.random.randint(max_stage + 1)
 # end get_stage_uniform
 
-import torch
-
 def apply_focal_sharpness(
         melody_grid,
         target_indices,

@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from train_utils import apply_structured_masking
+from train_utils import apply_structured_masking, apply_focal_sharpness
 from music21 import harmony, stream, metadata, chord, note, key, meter, tempo, duration
 import mir_eval
 import numpy as np
@@ -259,7 +259,8 @@ def beam_token_by_token_generate(
         max_steps=None,         # optional limit on number of iterations
         beam_size=5,            # number of beams to keep
         top_k=5,                # number of candidates per expansion
-        unmasking_order='random' # in ['random', 'start', 'end', 'certain', 'uncertain']
+        unmasking_order='random', # in ['random', 'start', 'end', 'certain', 'uncertain']
+        focal_sharpness=0.0
     ):
     device = melody_grid.device
     seq_len = melody_grid.shape[1]
@@ -299,33 +300,15 @@ def beam_token_by_token_generate(
             s = max(round((num_unmasked / total_tokens) * num_stages)-1, 0)
 
             with torch.no_grad():
-                logits = model(
+                logits1 = model(
                     melody_grid=melody_grid.to(model.device),
                     conditioning_vec=conditioning_vec.to(model.device),
                     harmony_tokens=visible_harmony.to(model.device),
                     stage_indices=torch.LongTensor([s]).to(model.device)
                 )  # (1, seq_len, vocab_size)
+                logits = logits1
 
-            # Mask out invalid predictions if enforcing force_fill
-            if force_fill and (pad_token_id is not None and nc_token_id is not None):
-                for i in range(seq_len):
-                    if i <= last_active_index:
-                        logits[0, i, pad_token_id] = float('-inf')
-                        logits[0, i, nc_token_id] = float('-inf')
-                    else:
-                        logits[0, i, :] = float('-inf')
-                        logits[0, i, pad_token_id] = 1.0
-
-            # --- Convergence metric ---
-            if prev_logits is not None:
-                masked_positions = (visible_harmony == mask_token_id).squeeze(0).nonzero(as_tuple=True)[0]
-                if masked_positions.numel() > 0:
-                    prev_p = torch.softmax(prev_logits[0, masked_positions] / temperature, dim=-1)
-                    curr_p = torch.softmax(logits[0, masked_positions] / temperature, dim=-1)
-                    mad = torch.mean(torch.abs(prev_p - curr_p)).item()
-                    avg_diffs = avg_diffs + [mad]
-
-            # --- Random masked position selection ---
+            # --- Masked position selection ---
             masked_positions = (visible_harmony == mask_token_id).squeeze(0).nonzero(as_tuple=True)[0]
             if masked_positions.numel() == 0:
                 candidates.append((visible_harmony, score, avg_diffs, logits.clone()))
@@ -354,7 +337,44 @@ def beam_token_by_token_generate(
                 print('Unknown unmasking order: ', unmasking_order, '. Doing random.')
                 # pick position at random
                 pos = masked_positions[torch.randint(0, masked_positions.numel(), (1,))].item()
+            
+            # now apply focal sharpness if needed
+            if focal_sharpness > 0.0:
+                focussed_melody_grid = apply_focal_sharpness(
+                    melody_grid,
+                    torch.tensor(pos).reshape(1,1).to(model.device),
+                    focal_sharpness
+                )
+                with torch.no_grad():
+                    logits2 = model(
+                        melody_grid=focussed_melody_grid.to(model.device),
+                        conditioning_vec=conditioning_vec.to(model.device),
+                        harmony_tokens=visible_harmony.to(model.device),
+                        stage_indices=torch.LongTensor([s]).to(model.device)
+                    )  # (1, seq_len, vocab_size)
+                    logits = logits2
+                    # print(f'focal sharpness applied at pos {pos} with sharpness {focal_sharpness}')
+                    # print('melody grid diff norm: ', torch.norm(melody_grid - focussed_melody_grid).item() )
+                    # print('logits diff norm: ', torch.norm(logits1[0, pos] - logits2[0, pos]).item() )
 
+            # Mask out invalid predictions if enforcing force_fill
+            if force_fill and (pad_token_id is not None and nc_token_id is not None):
+                for i in range(seq_len):
+                    if i <= last_active_index:
+                        logits[0, i, pad_token_id] = float('-inf')
+                        logits[0, i, nc_token_id] = float('-inf')
+                    else:
+                        logits[0, i, :] = float('-inf')
+                        logits[0, i, pad_token_id] = 1.0
+
+            # --- Convergence metric ---
+            if prev_logits is not None:
+                masked_positions = (visible_harmony == mask_token_id).squeeze(0).nonzero(as_tuple=True)[0]
+                if masked_positions.numel() > 0:
+                    prev_p = torch.softmax(prev_logits[0, masked_positions] / temperature, dim=-1)
+                    curr_p = torch.softmax(logits[0, masked_positions] / temperature, dim=-1)
+                    mad = torch.mean(torch.abs(prev_p - curr_p)).item()
+                    avg_diffs = avg_diffs + [mad]
 
             # --- Top-k sampling expansion ---
             masked_logits = logits[0, pos] / temperature
@@ -609,6 +629,9 @@ def save_harmonized_score(score, title="Harmonized Piece", out_path="harmonized.
 # end save_harmonized_score
 
 def load_model(
+    d_model=512, 
+    nhead=8, 
+    num_layers=8, 
     curriculum_type='random',
     subfolder=None,
     device_name='cuda:0',
@@ -627,6 +650,9 @@ def load_model(
             print('Selected device not available: ' + device_name)
             device = torch.device('cpu')
     model = GridMLMMelHarm(
+        d_model=d_model, 
+        nhead=nhead, 
+        num_layers=num_layers, 
         chord_vocab_size=len(tokenizer.vocab),
         device=device,
         conditioning_dim=conditioning_dim,
@@ -926,6 +952,7 @@ def generate_files_with_beam(
         mxl_folder,
         midi_folder,
         name_suffix,
+        curriculum_type='random',
         use_constraints=False,
         condition='time_signature',
         force_condition=None,
@@ -936,7 +963,8 @@ def generate_files_with_beam(
         temperature=1.0,
         beam_size=5,
         top_k=5,
-        unmasking_order='random'
+        unmasking_order='random',
+        focal_sharpness=0.0
     ):
     # we cannot have intertwine_bar_info == True and use_constraints == False
     # because bar information is passed through the constraints
@@ -963,7 +991,9 @@ def generate_files_with_beam(
     conditioning_vec = torch.FloatTensor( input_encoded[condition] ).reshape( 1, len(input_encoded[condition]) )
     if force_condition is not None:
         conditioning_vec = torch.FloatTensor( force_condition ).reshape( 1, len(force_condition) )
-    print('conditioning_vec: ', conditioning_vec)
+    if curriculum_type == 'step':
+        conditioning_vec = torch.cat([conditioning_vec, torch.tensor([[focal_sharpness]], device=conditioning_vec.device, dtype=conditioning_vec.dtype)], dim=1)
+    
     random_generated_harmony, avg_diffs = beam_token_by_token_generate(
         model=model,
         melody_grid=melody_grid.to(model.device),
@@ -978,7 +1008,8 @@ def generate_files_with_beam(
         chord_constraints = harmony_input.to(model.device) if use_constraints or intertwine_bar_info else None,
         beam_size=beam_size,
         top_k=top_k,
-        unmasking_order=unmasking_order
+        unmasking_order=unmasking_order,
+        focal_sharpness=focal_sharpness
     )
     gen_output_tokens = []
     for t in random_generated_harmony[0].tolist():

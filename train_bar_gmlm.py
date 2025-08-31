@@ -73,6 +73,9 @@ def main():
         else:
             print('Selected device not available: ' + device_name)
     model = GridMLMMelHarm(
+        d_model=512, 
+        nhead=8, 
+        num_layers=8, 
         chord_vocab_size=len(tokenizer.vocab),
         device=device,
         max_stages=total_stages,
