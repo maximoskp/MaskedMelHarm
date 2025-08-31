@@ -405,7 +405,8 @@ def validation_loop(model, valloader, mask_token_id, bar_token_id, condition, to
                 val_loss = running_loss/batch_num
                 # accuracy
                 predictions = logits.argmax(dim=-1)
-                mask = harmony_target != harmony_input # harmony_target != -100
+                # mask = harmony_target != harmony_input # harmony_target != -100
+                mask = torch.logical_and(harmony_target != harmony_input, harmony_target != -100)
                 running_accuracy += (predictions[mask] == harmony_target[mask]).sum().item()/mask.sum().item()
                 val_accuracy = running_accuracy/batch_num
                 # perplexity
@@ -555,7 +556,7 @@ def train_with_curriculum(
                 train_loss = running_loss/batch_num
                 # accuracy
                 predictions = logits.argmax(dim=-1)
-                mask = harmony_target != harmony_input # harmony_target != -100
+                mask = torch.logical_and(harmony_target != harmony_input, harmony_target != -100)
                 running_accuracy += (predictions[mask] == harmony_target[mask]).sum().item()/mask.sum().item()
                 train_accuracy = running_accuracy/batch_num
                 # perplexity
