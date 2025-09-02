@@ -46,8 +46,8 @@ def single_step_progressive_masking(
         bar_mask = (harmony_tokens == bar_token_id)
         # Put bar tokens in visible_harmony (always unmasked)
         visible_harmony[bar_mask] = bar_token_id
-        # Also include them in the denoising target (so model predicts them too)
-        denoising_target[bar_mask] = bar_token_id
+        # # Also include them in the denoising target (so model predicts them too)
+        # denoising_target[bar_mask] = bar_token_id
     
     stage_indices = torch.randint(0, total_stages, (B,), device=device)
     target_indices = torch.zeros((B,), device=device)
@@ -101,8 +101,8 @@ def random_progressive_masking(
         bar_mask = (harmony_tokens == bar_token_id)
         # Put bar tokens in visible_harmony (always unmasked)
         visible_harmony[bar_mask] = bar_token_id
-        # Also include them in the denoising target (so model predicts them too)
-        denoising_target[bar_mask] = bar_token_id
+        # # Also include them in the denoising target (so model predicts them too)
+        # denoising_target[bar_mask] = bar_token_id
     
     stage_indices = torch.randint(0, total_stages, (B,), device=device)
     for b in range(B):
