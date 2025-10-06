@@ -1,11 +1,11 @@
 import torch
 import torch.nn.functional as F
-# from train_utils import apply_structured_masking
+from train_utils import apply_structured_masking
 from music21 import harmony, stream, metadata, chord, note, key, meter, tempo, duration, clef
 import mir_eval
 import numpy as np
 from copy import deepcopy
-from models import GridMLMMelHarm, GridMLMMelHarmNoStage
+from models import GridMLMMelHarm, GridMLMMelHarmNoStage, DualGridMLMMelHarm, SingleGridMLMelHarm, SEModular
 import os
 from music_utils import transpose_score
 
@@ -119,6 +119,371 @@ def random_progressive_generate(
 
     return visible_harmony  # Final generated token sequence
 # end random_progressive_generate
+
+
+def greedy_token_by_token_generate(
+    model,
+    melody_grid,            # (1, seq_len, input_dim)
+    conditioning_vec,       # (1, cond_dim)
+    num_stages,             # e.g., 10
+    mask_token_id,          # token ID used for masking
+    bar_token_id,           # token ID for bar markers
+    temperature=1.0,        # optional softmax temperature
+    pad_token_id=None,      # token ID for <pad>
+    nc_token_id=None,       # token ID for <nc>
+    force_fill=True,        # disallow <pad>/<nc> before melody ends
+    chord_constraints=None, # chord + bar constraints
+    max_steps=None          # optional limit on number of iterations
+):
+    device = melody_grid.device
+    seq_len = melody_grid.shape[1]
+
+    # --- 1. Initialize ---
+    visible_harmony = torch.full((1, seq_len), mask_token_id, dtype=torch.long, device=device)
+
+    if chord_constraints is not None:
+        idxs = torch.logical_and(chord_constraints != nc_token_id,
+                                 chord_constraints != pad_token_id)
+        visible_harmony[idxs] = chord_constraints[idxs]
+
+    # Compute last active melody index if forcing fill
+    if force_fill:
+        active = (melody_grid != 0).any(dim=-1).squeeze(0)  # shape: (seq_len,)
+        try:
+            last_active_index = active.nonzero(as_tuple=True)[0].max().item()
+        except:
+            last_active_index = -1
+    else:
+        last_active_index = -1
+
+    # Prepare for convergence tracking
+    prev_logits = None
+    avg_diffs = []
+
+    # --- 2. Iterative greedy unmasking ---
+    total_tokens = visible_harmony.numel()
+    step = 0
+    while (visible_harmony == mask_token_id).any():
+        if max_steps is not None and step >= max_steps:
+            break
+        num_masked = (visible_harmony == mask_token_id).sum().item()
+        num_unmasked = total_tokens - num_masked
+        s = max(round((num_unmasked / total_tokens) * num_stages)-1, 0)
+        with torch.no_grad():
+            logits = model(
+                melody_grid=melody_grid.to(model.device),
+                conditioning_vec=conditioning_vec.to(model.device),
+                harmony_tokens=visible_harmony.to(model.device),
+                stage_indices=torch.LongTensor([s]).to(model.device)  # optional if model expects stage
+            )  # (1, seq_len, vocab_size)
+
+        # Mask out invalid predictions if enforcing force_fill
+        if force_fill and (pad_token_id is not None and nc_token_id is not None):
+            for i in range(seq_len):
+                if i <= last_active_index:
+                    logits[0, i, pad_token_id] = float('-inf')
+                    logits[0, i, nc_token_id] = float('-inf')
+                else:
+                    logits[0, i, :] = float('-inf')
+                    logits[0, i, pad_token_id] = 1.0
+
+        # Compute probabilities
+        probs = torch.softmax(logits / temperature, dim=-1)  # (1, seq_len, vocab_size)
+        confidences, predictions = torch.max(probs, dim=-1)  # (1, seq_len)
+
+        # --- Convergence metric ---
+        if prev_logits is not None:
+            # Only compare masked positions
+            masked_positions = (visible_harmony == mask_token_id).squeeze(0).nonzero(as_tuple=True)[0]
+            if masked_positions.numel() > 0:
+                prev_p = torch.softmax(prev_logits[0, masked_positions] / temperature, dim=-1)
+                curr_p = torch.softmax(logits[0, masked_positions] / temperature, dim=-1)
+                # Mean absolute difference across vocab dimension, then average over positions
+                mad = torch.mean(torch.abs(prev_p - curr_p)).item()
+                avg_diffs.append(mad)
+        prev_logits = logits.clone()
+
+
+        # # --- Greedy pick: unmask token with highest confidence ---
+        # masked_positions = (visible_harmony == mask_token_id).squeeze(0).nonzero(as_tuple=True)[0]
+        # if masked_positions.numel() == 0:
+        #     break
+
+        # masked_confidences = confidences[0, masked_positions]
+        # best_idx = masked_positions[torch.argmax(masked_confidences)].item()
+        # visible_harmony[0, best_idx] = predictions[0, best_idx]
+
+        # --- Sampling pick: unmask one token using top-k temperature sampling ---
+        masked_positions = (visible_harmony == mask_token_id).squeeze(0).nonzero(as_tuple=True)[0]
+        if masked_positions.numel() == 0:
+            break
+
+        # Get logits only at masked positions
+        masked_logits = logits[0, masked_positions] / temperature  # (num_masked, vocab_size)
+
+        # For each masked position, find the most confident one (like greedy),
+        # but sample the actual token value with top-k sampling
+        masked_probs = torch.softmax(masked_logits, dim=-1)
+        masked_confidences, _ = torch.max(masked_probs, dim=-1)
+
+        # Pick the masked position with highest confidence
+        best_pos_idx = torch.argmax(masked_confidences).item()
+        pos = masked_positions[best_pos_idx].item()
+
+        # --- Top-k sampling at this position ---
+        k = min(10, masked_logits.size(-1))  # choose k (adjustable)
+        topk_logits, topk_indices = torch.topk(masked_logits[best_pos_idx], k)
+        topk_probs = torch.softmax(topk_logits, dim=-1)
+        sampled_idx = torch.multinomial(topk_probs, 1).item()
+        sampled_token = topk_indices[sampled_idx].item()
+
+        # Update visible_harmony with the sampled token
+        visible_harmony[0, pos] = sampled_token
+
+        step += 1
+
+    return visible_harmony, avg_diffs
+# end greedy_token_by_token_generate
+
+def beam_token_by_token_generate(
+        model,
+        melody_grid,            # (1, seq_len, input_dim)
+        mask_token_id,          # token ID used for masking
+        bar_token_id,           # token ID for bar markers
+        temperature=1.0,        # optional softmax temperature
+        pad_token_id=None,      # token ID for <pad>
+        nc_token_id=None,       # token ID for <nc>
+        force_fill=True,        # disallow <pad>/<nc> before melody ends
+        chord_constraints=None, # chord + bar constraints
+        beam_size=5,            # number of beams to keep
+        top_k=5,                # number of candidates per expansion
+        unmasking_order='random', # in ['random', 'start', 'end', 'certain', 'uncertain']
+    ):
+    device = melody_grid.device
+    seq_len = melody_grid.shape[1]
+
+    # --- 1. Initialize ---
+    init_visible_harmony = torch.full((1, seq_len), mask_token_id, dtype=torch.long, device=device)
+
+    if chord_constraints is not None:
+        idxs = torch.logical_and(chord_constraints != nc_token_id,
+                                 chord_constraints != pad_token_id)
+        init_visible_harmony[idxs] = chord_constraints[idxs]
+    
+    # Compute last active melody index if forcing fill
+    if force_fill:
+        active = (melody_grid != 0).any(dim=-1).squeeze(0)  # shape: (seq_len,)
+        try:
+            last_active_index = active.nonzero(as_tuple=True)[0].max().item()
+        except:
+            last_active_index = -1
+    else:
+        last_active_index = -1
+
+    # Each beam is (visible_harmony, score, avg_diffs, prev_logits)
+    beams = [(init_visible_harmony.clone(), 0.0, [], None)]
+    total_tokens = init_visible_harmony.numel()
+    
+    step = 0
+    while any((bh[0] == mask_token_id).any() for bh in beams):
+        candidates = []
+        # print('entering beams==========================================')
+        for visible_harmony, score, avg_diffs, prev_logits in beams:
+
+            with torch.no_grad():
+                logits1 = model(
+                    melody_grid=melody_grid.to(model.device),
+                    harmony_tokens=visible_harmony.to(model.device),
+                    # stage_indices=torch.LongTensor([s]).to(model.device)
+                )  # (1, seq_len, vocab_size)
+                logits = logits1
+
+            # --- Masked position selection ---
+            masked_positions = (visible_harmony == mask_token_id).squeeze(0).nonzero(as_tuple=True)[0]
+            if masked_positions.numel() == 0:
+                candidates.append((visible_harmony, score, avg_diffs, logits.clone()))
+                continue
+            # Compute entropies over masked positions
+            probs = torch.softmax(logits[0, masked_positions] / temperature, dim=-1)
+            masked_probs = probs  # (num_masked, vocab_size)
+            entropies = -(masked_probs * masked_probs.clamp_min(1e-9).log()).sum(dim=-1)
+
+            if unmasking_order == 'random':
+                # pick position at random
+                pos = masked_positions[torch.randint(0, masked_positions.numel(), (1,))].item()
+            elif unmasking_order == 'uncertain':
+                # Pick position with highest entropy
+                pos = masked_positions[torch.argmax(entropies)].item()
+            elif unmasking_order == 'certain':
+                # Pick position with lowest entropy
+                pos = masked_positions[torch.argmin(entropies)].item()
+            elif unmasking_order == 'start':
+                # pick position from start to end
+                pos = masked_positions[0].item()
+            elif unmasking_order == 'end':
+                # pick position from end to start
+                pos = masked_positions[-1].item()
+            else:
+                print('Unknown unmasking order: ', unmasking_order, '. Doing random.')
+                # pick position at random
+                pos = masked_positions[torch.randint(0, masked_positions.numel(), (1,))].item()
+
+            # Mask out invalid predictions if enforcing force_fill
+            if force_fill and (pad_token_id is not None and nc_token_id is not None):
+                for i in range(seq_len):
+                    if i <= last_active_index:
+                        logits[0, i, pad_token_id] = float('-inf')
+                        logits[0, i, nc_token_id] = float('-inf')
+                    else:
+                        logits[0, i, :] = float('-inf')
+                        logits[0, i, pad_token_id] = 1.0
+
+            # --- Convergence metric ---
+            if prev_logits is not None:
+                masked_positions = (visible_harmony == mask_token_id).squeeze(0).nonzero(as_tuple=True)[0]
+                if masked_positions.numel() > 0:
+                    prev_p = torch.softmax(prev_logits[0, masked_positions] / temperature, dim=-1)
+                    curr_p = torch.softmax(logits[0, masked_positions] / temperature, dim=-1)
+                    mad = torch.mean(torch.abs(prev_p - curr_p)).item()
+                    avg_diffs = avg_diffs + [mad]
+
+            # --- Top-k sampling expansion ---
+            masked_logits = logits[0, pos] / temperature
+            topk_logits, topk_indices = torch.topk(masked_logits, min(top_k, masked_logits.size(-1)))
+            topk_probs = torch.softmax(topk_logits, dim=-1)
+            # print('---------------- pos: ', pos)
+            # print(visible_harmony)
+            # print(topk_indices)
+            # print(topk_probs)
+            for j in range(topk_indices.size(0)):
+                token = topk_indices[j].item()
+                token_prob = topk_probs[j].item()
+
+                new_harmony = visible_harmony.clone()
+                new_harmony[0, pos] = token
+                new_score = score + torch.log(torch.tensor(token_prob + 1e-12)).item()
+
+                candidates.append((new_harmony, new_score, avg_diffs, logits.clone()))
+
+        # Keep top beam_size candidates
+        beams = sorted(candidates, key=lambda x: x[1], reverse=True)[:beam_size]
+        step += 1
+
+    # Return best beam (highest score)
+    best_harmony, _, best_avg_diffs, _ = beams[0]
+    return best_harmony, best_avg_diffs
+# end beam_token_by_token_generate
+
+def nucleus_token_by_token_generate(
+        model,
+        melody_grid,            # (1, seq_len, input_dim)
+        mask_token_id,          # token ID used for masking
+        temperature=1.0,        # optional softmax temperature
+        pad_token_id=None,      # token ID for <pad>
+        nc_token_id=None,       # token ID for <nc>
+        force_fill=True,        # disallow <pad>/<nc> before melody ends
+        chord_constraints=None, # chord + bar constraints
+        p=0.9,                  # nucleus threshold
+        unmasking_order='random', # in ['random', 'start', 'end', 'certain', 'uncertain']
+        num_stages=None,
+        conditioning_vec=None
+    ):
+    device = melody_grid.device
+    seq_len = melody_grid.shape[1]
+
+    # --- 1. Initialize ---
+    visible_harmony = torch.full((1, seq_len), mask_token_id, dtype=torch.long, device=device)
+    if chord_constraints is not None:
+        idxs = torch.logical_and(chord_constraints != nc_token_id,
+                                 chord_constraints != pad_token_id)
+        visible_harmony[idxs] = chord_constraints[idxs]
+    # Compute last active melody index if forcing fill
+    if force_fill:
+        active = (melody_grid != 0).any(dim=-1).squeeze(0)  # shape: (seq_len,)
+        try:
+            last_active_index = active.nonzero(as_tuple=True)[0].max().item()
+        except:
+            last_active_index = -1
+    else:
+        last_active_index = -1
+
+    step = 0
+    while (visible_harmony == mask_token_id).any():
+        with torch.no_grad():
+            stage = int(
+                ((visible_harmony == mask_token_id).sum().item()/visible_harmony.size().numel())*num_stages
+            )
+            if conditioning_vec is None:
+                logits = model(
+                    melody_grid=melody_grid.to(model.device),
+                    harmony_tokens=visible_harmony.to(model.device),
+                    stage_indices=torch.LongTensor([stage]).to(model.device)
+                )  # (1, seq_len, vocab_size)
+            else:
+                logits = model(
+                    melody_grid=melody_grid.to(model.device),
+                    conditioning_vec=conditioning_vec.to(model.device),
+                    harmony_tokens=visible_harmony.to(model.device),
+                    stage_indices=torch.LongTensor([stage]).to(model.device)
+                )  # (1, seq_len, vocab_size)
+        # --- Masked position selection ---
+        masked_positions = (visible_harmony == mask_token_id).squeeze(0).nonzero(as_tuple=True)[0]
+        if masked_positions.numel() == 0:
+            break
+
+        probs = torch.softmax(logits[0, masked_positions] / temperature, dim=-1)
+        entropies = -(probs * probs.clamp_min(1e-9).log()).sum(dim=-1)
+
+        if unmasking_order == 'random':
+            pos = masked_positions[torch.randint(0, masked_positions.numel(), (1,))].item()
+        elif unmasking_order == 'uncertain':
+            pos = masked_positions[torch.argmax(entropies)].item()
+        elif unmasking_order == 'certain':
+            pos = masked_positions[torch.argmin(entropies)].item()
+        elif unmasking_order == 'start':
+            pos = masked_positions[0].item()
+        elif unmasking_order == 'end':
+            pos = masked_positions[-1].item()
+        else:
+            pos = masked_positions[torch.randint(0, masked_positions.numel(), (1,))].item()
+
+        # Mask out invalid predictions if enforcing force_fill
+        if force_fill and (pad_token_id is not None and nc_token_id is not None):
+            for i in range(seq_len):
+                if i <= last_active_index:
+                    logits[0, i, pad_token_id] = float('-inf')
+                    logits[0, i, nc_token_id] = float('-inf')
+                else:
+                    logits[0, i, :] = float('-inf')
+                    logits[0, i, pad_token_id] = 1.0
+
+        # --- Nucleus sampling step ---
+        logits_pos = logits[0, pos] / temperature
+        probs_pos = torch.softmax(logits_pos, dim=-1)
+
+        # sort probs descending
+        sorted_probs, sorted_idx = torch.sort(probs_pos, descending=True)
+        cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+
+        # mask out tokens beyond nucleus p
+        nucleus_mask = cumulative_probs <= p
+        nucleus_mask[0] = True  # keep at least one token
+        nucleus_probs = sorted_probs[nucleus_mask]
+        nucleus_idx = sorted_idx[nucleus_mask]
+
+        # renormalize
+        nucleus_probs = nucleus_probs / nucleus_probs.sum()
+
+        # sample
+        sampled_idx = torch.multinomial(nucleus_probs, 1).item()
+        token = nucleus_idx[sampled_idx].item()
+
+        # update harmony
+        visible_harmony[0, pos] = token
+        step += 1
+    
+    return visible_harmony
+# end nucleus_token_by_token_generate
 
 def structured_progressive_generate(
     model,
@@ -540,7 +905,7 @@ def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_s
     # Create deep copy of flat melody part
     # Create a new part for filtered content
     filtered_part = stream.Part()
-    filtered_part.id = melody_part.id  # Preserve ID
+    # filtered_part.id = melody_part.id  # Preserve ID
 
     # Copy key and time signatures from the original part
     for el in melody_part.recurse().getElementsByClass((key.KeySignature, meter.TimeSignature,  tempo.MetronomeMark)):
@@ -579,14 +944,19 @@ def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_s
     last_chord_symbol = None
     inserted_chords = {}
 
+    # keep bar tokens out of the steps count
+    num_bar_tokens = 0
     for i, mir_chord in enumerate(generated_chords):
         if mir_chord in ("<pad>", "<nc>"):
             continue
         if mir_chord == last_chord_symbol:
             continue
+        if mir_chord == "<bar>":
+            num_bar_tokens += 1
+            continue
         
-        offset = (i + skip_steps) * ql_per_16th
-
+        offset = (i + skip_steps - num_bar_tokens) * ql_per_16th
+        
         # Decode mir_eval chord symbol to chord symbol object
         try:
             r, t, _ = mir_eval.chord.encode(mir_chord, reduce_extended_chords=True)
@@ -605,7 +975,7 @@ def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_s
                 break
         # bar = next((b for b in reversed(bars) if b.offset <= offset), None)
 
-        offset = (i + skip_steps) * ql_per_16th
+        offset = (i + skip_steps - num_bar_tokens) * ql_per_16th
         
         if bar:
             bar_start = bar.offset
@@ -709,6 +1079,139 @@ def load_model(
     model.to(device)
     return model
 # end load_model
+
+def load_DE_model(
+    d_model=512, 
+    nhead=4, 
+    num_layers_mel=4,
+    num_layers_harm=4,
+    curriculum_type='f2f',
+    subfolder=None,
+    device_name='cuda:0',
+    tokenizer=None,
+    melody_length=80,
+    harmony_length=80,
+    exponent=5,
+    nvis=None
+):
+    if device_name == 'cpu':
+        device = torch.device('cpu')
+    else:
+        if torch.cuda.is_available():
+            device = torch.device(device_name)
+        else:
+            print('Selected device not available: ' + device_name)
+            device = torch.device('cpu')
+    model = DualGridMLMMelHarm(
+        chord_vocab_size=len(tokenizer.vocab),
+        d_model=d_model,
+        nhead=nhead,
+        num_layers_mel=num_layers_mel,
+        num_layers_harm=num_layers_harm,
+        device=device,
+        melody_length=melody_length,
+        harmony_length=harmony_length,
+        pianoroll_dim=tokenizer.pianoroll_dim,
+    )
+    model_path = 'saved_models/' + subfolder + '/' + curriculum_type + str(exponent)
+    if nvis is not None:
+        model_path += '_nvis' + str(nvis)
+    model_path += '.pt'
+    # checkpoint = torch.load(model_path, map_location=device_name, weights_only=True)
+    checkpoint = torch.load(model_path, map_location=device_name)
+    model.load_state_dict(checkpoint)
+    model.eval()
+    model.to(device)
+    return model
+# end load_DE_model
+
+def load_SE_model(
+    d_model=512, 
+    nhead=4, 
+    num_layers=4,
+    curriculum_type='f2f',
+    subfolder=None,
+    device_name='cuda:0',
+    tokenizer=None,
+    grid_length=80,
+    exponent=5,
+    nvis=None,
+):
+    if device_name == 'cpu':
+        device = torch.device('cpu')
+    else:
+        if torch.cuda.is_available():
+            device = torch.device(device_name)
+        else:
+            print('Selected device not available: ' + device_name)
+            device = torch.device('cpu')
+    model = SingleGridMLMelHarm(
+        chord_vocab_size=len(tokenizer.vocab),
+        d_model=d_model,
+        nhead=nhead,
+        num_layers=num_layers,
+        device=device,
+        grid_length=grid_length,
+        pianoroll_dim=tokenizer.pianoroll_dim,
+    )
+    model_path = 'saved_models/' + subfolder + '/' + curriculum_type + str(exponent)
+    if nvis is not None:
+        model_path += '_nvis' + str(nvis)
+    model_path += '.pt'
+    # checkpoint = torch.load(model_path, map_location=device_name, weights_only=True)
+    checkpoint = torch.load(model_path, map_location=device_name)
+    model.load_state_dict(checkpoint)
+    model.eval()
+    model.to(device)
+    return model
+# end load_SE_model
+
+def load_SE_Modular(
+    d_model=512, 
+    nhead=8, 
+    num_layers=8,
+    curriculum_type='f2f',
+    subfolder=None,
+    device_name='cuda:0',
+    tokenizer=None,
+    grid_length=80,
+    nvis=None,
+    condition_dim=None,  # if not None, add a condition token of this dim at start
+    unmasking_stages=None,  # if not None, use stage-based unmasking
+    trainable_pos_emb=False,
+):
+    if device_name == 'cpu':
+        device = torch.device('cpu')
+    else:
+        if torch.cuda.is_available():
+            device = torch.device(device_name)
+        else:
+            print('Selected device not available: ' + device_name)
+            device = torch.device('cpu')
+    model = SEModular(
+        chord_vocab_size=len(tokenizer.vocab),
+        d_model=d_model,
+        nhead=nhead,
+        num_layers=num_layers,
+        device=device,
+        grid_length=grid_length,
+        pianoroll_dim=tokenizer.pianoroll_dim,
+        condition_dim=condition_dim,  # if not None, add a condition token of this dim at start
+        unmasking_stages=unmasking_stages,  # if not None, use stage-based unmasking
+        trainable_pos_emb=trainable_pos_emb
+    )
+    model_path = 'saved_models/SE/' + subfolder + '/' + curriculum_type
+    if nvis is not None:
+        model_path += '_nvis' + str(nvis)
+    model_path += '.pt'
+    print('model_path: ',model_path)
+    # checkpoint = torch.load(model_path, map_location=device_name, weights_only=True)
+    checkpoint = torch.load(model_path, map_location=device_name)
+    model.load_state_dict(checkpoint)
+    model.eval()
+    model.to(device)
+    return model
+# end load_SE_Modular
 
 def load_model_no_stage(
     curriculum_type='random',
@@ -892,3 +1395,310 @@ def generate_files_with_random(
 
     return gen_output_tokens, harmony_real_tokens, gen_score, real_score
 # end generate_files_with_random
+
+def generate_files_with_greedy(
+        model,
+        tokenizer,
+        input_f,
+        mxl_folder,
+        midi_folder,
+        name_suffix,
+        use_constraints=False,
+        condition='time_signature',
+        force_condition=None,
+        intertwine_bar_info=False, # no bar default
+        trim_start=True, # no bar default
+        normalize_tonality=False,
+        num_stages=10,
+        temperature=1.0
+    ):
+    # we cannot have intertwine_bar_info == True and use_constraints == False
+    # because bar information is passed through the constraints
+    # if intertwine_bar_info:
+    #     use_constraints = True
+
+    pad_token_id = tokenizer.pad_token_id
+    nc_token_id = tokenizer.nc_token_id
+
+    input_encoded = tokenizer.encode(
+            input_f,
+            keep_durations=True,
+            normalize_tonality=normalize_tonality,
+        )
+
+    harmony_real = torch.LongTensor(input_encoded['harmony_ids']).reshape(1, len(input_encoded['harmony_ids']))
+    harmony_input = torch.LongTensor(input_encoded['harmony_ids']).reshape(1, len(input_encoded['harmony_ids']))
+    # if intertwine_bar_info is True and use_constraints is False, we only need to pass
+    # the bar information as a constraint, not the chords, or anything else
+    # so mask out everything except from bar_token_ids
+    if intertwine_bar_info and not use_constraints:
+        harmony_input[ harmony_input != tokenizer.bar_token_id ] = tokenizer.mask_token_id
+    melody_grid = torch.FloatTensor( input_encoded['pianoroll'] ).reshape( 1, input_encoded['pianoroll'].shape[0], input_encoded['pianoroll'].shape[1] )
+    conditioning_vec = torch.FloatTensor( input_encoded[condition] ).reshape( 1, len(input_encoded[condition]) )
+    if force_condition is not None:
+        conditioning_vec = torch.FloatTensor( force_condition ).reshape( 1, len(force_condition) )
+    
+    random_generated_harmony, avg_diffs = greedy_token_by_token_generate(
+        model=model,
+        melody_grid=melody_grid.to(model.device),
+        conditioning_vec=conditioning_vec.to(model.device),
+        num_stages=num_stages,
+        mask_token_id=tokenizer.mask_token_id,
+        bar_token_id=tokenizer.bar_token_id,
+        temperature=temperature,
+        pad_token_id=pad_token_id,      # token ID for <pad>
+        nc_token_id=nc_token_id,       # token ID for <nc>
+        force_fill=True,         # disallow <pad>/<nc> before melody ends
+        chord_constraints = harmony_input.to(model.device) if use_constraints or intertwine_bar_info else None
+    )
+    gen_output_tokens = []
+    for t in random_generated_harmony[0].tolist():
+        gen_output_tokens.append( tokenizer.ids_to_tokens[t] )
+    # keep ground truth
+    harmony_real_tokens = []
+    for t in harmony_real[0].tolist():
+        harmony_real_tokens.append( tokenizer.ids_to_tokens[t] )
+    
+    gen_score = overlay_generated_harmony(
+        input_encoded['melody_part'],
+        gen_output_tokens,
+        input_encoded['ql_per_quantum'],
+        input_encoded['skip_steps']
+    )
+    if normalize_tonality:
+        gen_score = transpose_score(gen_score, input_encoded['back_interval'])
+    mxl_file_name = os.path.join(mxl_folder, f'gen_{name_suffix}' + '.mxl')
+    midi_file_name = os.path.join(midi_folder, f'gen_{name_suffix}' + '.mid')
+    save_harmonized_score(gen_score, out_path=mxl_file_name)
+    save_harmonized_score(gen_score, out_path=midi_file_name)
+    # os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
+
+    real_score = overlay_generated_harmony(
+        input_encoded['melody_part'],
+        harmony_real_tokens,
+        input_encoded['ql_per_quantum'],
+        input_encoded['skip_steps']
+    )
+    
+    if normalize_tonality:
+        real_score = transpose_score(real_score, input_encoded['back_interval'])
+    mxl_file_name = os.path.join(mxl_folder, f'real_{name_suffix}' + '.mxl')
+    midi_file_name = os.path.join(midi_folder, f'real_{name_suffix}' + '.mid')
+    save_harmonized_score(real_score, out_path=mxl_file_name)
+    save_harmonized_score(real_score, out_path=midi_file_name)
+    # os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
+
+    return gen_output_tokens, harmony_real_tokens, gen_score, real_score, avg_diffs
+# end generate_files_with_greedy
+
+def generate_files_with_beam(
+        model,
+        tokenizer,
+        input_f,
+        mxl_folder,
+        midi_folder,
+        name_suffix,
+        use_constraints=False,
+        intertwine_bar_info=False, # no bar default
+        normalize_tonality=False,
+        temperature=1.0,
+        beam_size=5,
+        top_k=5,
+        unmasking_order='random',
+        create_gen=True,
+        create_real=False
+    ):
+    # we cannot have intertwine_bar_info == True and use_constraints == False
+    # because bar information is passed through the constraints
+    # if intertwine_bar_info:
+    #     use_constraints = True
+
+    pad_token_id = tokenizer.pad_token_id
+    nc_token_id = tokenizer.nc_token_id
+
+    input_encoded = tokenizer.encode(
+            input_f,
+            keep_durations=True,
+            normalize_tonality=normalize_tonality,
+        )
+
+    harmony_real = torch.LongTensor(input_encoded['harmony_ids']).reshape(1, len(input_encoded['harmony_ids']))
+    harmony_input = torch.LongTensor(input_encoded['harmony_ids']).reshape(1, len(input_encoded['harmony_ids']))
+    # if intertwine_bar_info is True and use_constraints is False, we only need to pass
+    # the bar information as a constraint, not the chords, or anything else
+    # so mask out everything except from bar_token_ids
+    if intertwine_bar_info and not use_constraints:
+        harmony_input[ harmony_input != tokenizer.bar_token_id ] = tokenizer.mask_token_id
+    melody_grid = torch.FloatTensor( input_encoded['pianoroll'] ).reshape( 1, input_encoded['pianoroll'].shape[0], input_encoded['pianoroll'].shape[1] )
+    if create_gen:
+        random_generated_harmony, avg_diffs = beam_token_by_token_generate(
+            model=model,
+            melody_grid=melody_grid.to(model.device),
+            mask_token_id=tokenizer.mask_token_id,
+            bar_token_id=tokenizer.bar_token_id,
+            temperature=temperature,
+            pad_token_id=pad_token_id,      # token ID for <pad>
+            nc_token_id=nc_token_id,       # token ID for <nc>
+            force_fill=True,         # disallow <pad>/<nc> before melody ends
+            chord_constraints = harmony_input.to(model.device) if use_constraints or intertwine_bar_info else None,
+            beam_size=beam_size,
+            top_k=top_k,
+            unmasking_order=unmasking_order,
+        )
+        gen_output_tokens = []
+        for t in random_generated_harmony[0].tolist():
+            gen_output_tokens.append( tokenizer.ids_to_tokens[t] )
+    else:
+        avg_diffs = None
+        gen_output_tokens = None
+    # keep ground truth
+    harmony_real_tokens = []
+    for t in harmony_real[0].tolist():
+        harmony_real_tokens.append( tokenizer.ids_to_tokens[t] )
+    gen_score = None
+    real_score = None
+    if create_gen:
+        gen_score = overlay_generated_harmony(
+            input_encoded['melody_part'],
+            gen_output_tokens,
+            input_encoded['ql_per_quantum'],
+            input_encoded['skip_steps']
+        )
+        if normalize_tonality:
+            gen_score = transpose_score(gen_score, input_encoded['back_interval'])
+        if mxl_folder is not None:
+            mxl_file_name = os.path.join(mxl_folder, f'gen_{name_suffix}' + '.mxl')
+            save_harmonized_score(gen_score, out_path=mxl_file_name)
+        if midi_folder is not None:
+            midi_file_name = os.path.join(midi_folder, f'gen_{name_suffix}' + '.mid')
+            save_harmonized_score(gen_score, out_path=midi_file_name)
+        # os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
+    if create_real:
+        real_score = overlay_generated_harmony(
+            input_encoded['melody_part'],
+            harmony_real_tokens,
+            input_encoded['ql_per_quantum'],
+            input_encoded['skip_steps']
+        )
+        
+        if normalize_tonality:
+            real_score = transpose_score(real_score, input_encoded['back_interval'])
+        if mxl_folder is not None:
+            mxl_file_name = os.path.join(mxl_folder, f'real_{name_suffix}' + '.mxl')
+            save_harmonized_score(real_score, out_path=mxl_file_name)
+        if midi_folder is not None:
+            midi_file_name = os.path.join(midi_folder, f'real_{name_suffix}' + '.mid')
+            save_harmonized_score(real_score, out_path=midi_file_name)
+        # os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
+
+    return gen_output_tokens, harmony_real_tokens, gen_score, real_score, avg_diffs
+# end generate_files_with_beam
+
+def generate_files_with_nucleus(
+        model,
+        tokenizer,
+        input_f,
+        mxl_folder,
+        midi_folder,
+        name_suffix,
+        use_constraints=False,
+        intertwine_bar_info=False, # no bar default
+        normalize_tonality=False,
+        temperature=1.0,
+        p=0.9,
+        unmasking_order='random',
+        num_stages=None,
+        use_conditions=False,
+        create_gen=True,
+        create_real=False
+    ):
+    # we cannot have intertwine_bar_info == True and use_constraints == False
+    # because bar information is passed through the constraints
+    # if intertwine_bar_info:
+    #     use_constraints = True
+
+    pad_token_id = tokenizer.pad_token_id
+    nc_token_id = tokenizer.nc_token_id
+
+    input_encoded = tokenizer.encode(
+            input_f,
+            keep_durations=True,
+            normalize_tonality=normalize_tonality,
+        )
+
+    harmony_real = torch.LongTensor(input_encoded['harmony_ids']).reshape(1, len(input_encoded['harmony_ids']))
+    harmony_input = torch.LongTensor(input_encoded['harmony_ids']).reshape(1, len(input_encoded['harmony_ids']))
+    # if intertwine_bar_info is True and use_constraints is False, we only need to pass
+    # the bar information as a constraint, not the chords, or anything else
+    # so mask out everything except from bar_token_ids
+    if intertwine_bar_info and not use_constraints:
+        harmony_input[ harmony_input != tokenizer.bar_token_id ] = tokenizer.mask_token_id
+    melody_grid = torch.FloatTensor( input_encoded['pianoroll'] ).reshape( 1, input_encoded['pianoroll'].shape[0], input_encoded['pianoroll'].shape[1] )
+    if use_conditions:
+        conditioning_vec = torch.FloatTensor( input_encoded['time_signature'] ).reshape( 1, len(input_encoded['time_signature']) )
+    else:
+        conditioning_vec = None
+    
+    if create_gen:
+        random_generated_harmony = nucleus_token_by_token_generate(
+            model=model,
+            melody_grid=melody_grid.to(model.device),
+            mask_token_id=tokenizer.mask_token_id,
+            temperature=temperature,
+            pad_token_id=pad_token_id,      # token ID for <pad>
+            nc_token_id=nc_token_id,       # token ID for <nc>
+            force_fill=True,         # disallow <pad>/<nc> before melody ends
+            chord_constraints = harmony_input.to(model.device) if use_constraints or intertwine_bar_info else None,
+            p=p,
+            unmasking_order=unmasking_order,
+            num_stages=num_stages,
+            conditioning_vec=conditioning_vec
+        )
+        gen_output_tokens = []
+        for t in random_generated_harmony[0].tolist():
+            gen_output_tokens.append( tokenizer.ids_to_tokens[t] )
+    else:
+        avg_diffs = None
+        gen_output_tokens = None
+    # keep ground truth
+    harmony_real_tokens = []
+    for t in harmony_real[0].tolist():
+        harmony_real_tokens.append( tokenizer.ids_to_tokens[t] )
+    gen_score = None
+    real_score = None
+    if create_gen:
+        gen_score = overlay_generated_harmony(
+            input_encoded['melody_part'],
+            gen_output_tokens,
+            input_encoded['ql_per_quantum'],
+            input_encoded['skip_steps']
+        )
+        if normalize_tonality:
+            gen_score = transpose_score(gen_score, input_encoded['back_interval'])
+        if mxl_folder is not None:
+            mxl_file_name = os.path.join(mxl_folder, f'gen_{name_suffix}' + '.mxl')
+            save_harmonized_score(gen_score, out_path=mxl_file_name)
+        if midi_folder is not None:
+            midi_file_name = os.path.join(midi_folder, f'gen_{name_suffix}' + '.mid')
+            save_harmonized_score(gen_score, out_path=midi_file_name)
+        # os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
+    if create_real:
+        real_score = overlay_generated_harmony(
+            input_encoded['melody_part'],
+            harmony_real_tokens,
+            input_encoded['ql_per_quantum'],
+            input_encoded['skip_steps']
+        )
+        
+        if normalize_tonality:
+            real_score = transpose_score(real_score, input_encoded['back_interval'])
+        if mxl_folder is not None:
+            mxl_file_name = os.path.join(mxl_folder, f'real_{name_suffix}' + '.mxl')
+            save_harmonized_score(real_score, out_path=mxl_file_name)
+        if midi_folder is not None:
+            midi_file_name = os.path.join(midi_folder, f'real_{name_suffix}' + '.mid')
+            save_harmonized_score(real_score, out_path=midi_file_name)
+        # os.system(f'QT_QPA_PLATFORM=offscreen mscore -o {midi_file_name} {mxl_file_name}')
+
+    return gen_output_tokens, harmony_real_tokens, gen_score, real_score
+# end generate_files_with_nucleus
