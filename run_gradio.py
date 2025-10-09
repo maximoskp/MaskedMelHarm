@@ -133,9 +133,9 @@ DEVICE = "cpu" #for huggingface free
 models = {
     # "base2 • all 12 keys":  load_model("base2",  "all12", DEVICE, tokenizer),
     # "random • all 12 keys": load_model("random", "all12", DEVICE, tokenizer),
-    "base2 • Cmaj/Amin":      (load_model("base2",   "CA", DEVICE, tokenizer, total_stages=10), tokenizer),
-    "random10 • Cmaj/Amin":   (load_model("random10","CA", DEVICE, tokenizer, total_stages=10), tokenizer),
-    "random20 • Cmaj/Amin":   (load_model("random20","CA", DEVICE, tokenizer, total_stages=20), tokenizer),
+    # "base2 • Cmaj/Amin":      (load_model("base2",   "CA", DEVICE, tokenizer, total_stages=10), tokenizer),
+    # "random10 • Cmaj/Amin":   (load_model("random10","CA", DEVICE, tokenizer, total_stages=10), tokenizer),
+    # "random20 • Cmaj/Amin":   (load_model("random20","CA", DEVICE, tokenizer, total_stages=20), tokenizer),
 }
 
 # add SE models found under this folder automatically
@@ -152,10 +152,14 @@ def harmonise(file_path: str,
               variant: str,
               constraints: bool):
     # ---------------- choose model & generation routine ----------
-    is_base2 = variant.startswith("base2")
-    gen_fn   = generate_files_with_base2 if is_base2 else generate_files_with_random
+    if variant.startswith("base2"):
+        gen_fn = generate_files_with_base2
+    elif variant.startswith("random"):
+        gen_fn = generate_files_with_random
+    else:
+        gen_fn = generate_files_with_nucleus
     model, tok = models[variant]
-    need_norm = "Cmaj/Amin" in variant
+    need_norm = True # "Cmaj/Amin" in variant
 
     # ---------------- run generation -----------------------------
     name_sfx = f"{uuid.uuid4().hex}_{os.path.basename(file_path)}"
@@ -171,7 +175,15 @@ def harmonise(file_path: str,
         midi_folder        = mid_dir,
         name_suffix        = name_sfx,
         use_constraints    = constraints,
+        intertwine_bar_info='bar' in variant,
         normalize_tonality = need_norm,
+        temperature=0.2,
+        p=0.9,
+        unmasking_order='start',
+        num_stages=10,
+        use_conditions=None if 'bar' in variant else 16,
+        create_gen=True,
+        create_real=False
     )
 
 
