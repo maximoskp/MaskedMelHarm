@@ -57,13 +57,60 @@ def main():
 
     tokenizer = CSGridMLMTokenizer(fixed_length=80, quantization='4th', intertwine_bar_info=True, trim_start=False)
 
+    def compute_class_weights_from_dataset(dataset, tokenizer, scheme="temp", alpha=0.5, beta=0.999, ignore_index=-100):
+        """
+        Compute class weights for CrossEntropyLoss given a dataset of chord tokens.
+        
+        Args:
+            dataset: dataset loaded from pickle
+            tokenizer: tokenizer object with vocab (for num_classes)
+            scheme: one of ["inv", "inv_sqrt", "cb", "temp"]
+            alpha: used in temperature-scaled scheme
+            beta: used in class-balanced scheme
+            ignore_index: value used to skip padding/masked tokens
+        
+        Returns:
+            torch.Tensor of shape [num_classes] with normalized class weights
+        """
+        num_classes = len(tokenizer.vocab)
+        counts = torch.zeros(num_classes, dtype=torch.float)
+
+        # Count occurrences of chord tokens across dataset
+        for item in dataset:
+            tokens = torch.tensor(item["input_ids"], dtype=torch.long)
+            tokens = tokens[tokens != ignore_index]  # filter padding/masked tokens
+            counts += torch.bincount(tokens, minlength=num_classes).float()
+
+        freqs = counts / counts.sum()
+
+        # Apply weighting scheme
+        if scheme == "inv":  # 1/p
+            weights = 1.0 / (freqs + 1e-9)
+
+        elif scheme == "inv_sqrt":  # 1/sqrt(p)
+            weights = 1.0 / torch.sqrt(freqs + 1e-9)
+
+        elif scheme == "cb":  # Class-balanced loss
+            effective_num = 1.0 - torch.pow(beta, counts)
+            weights = (1.0 - beta) / (effective_num + 1e-9)
+
+        elif scheme == "temp":  # temperature-scaled: p^-alpha
+            weights = (freqs + 1e-9) ** (-alpha)
+
+        else:
+            raise ValueError(f"Unknown scheme: {scheme}")
+
+        # Normalize so average weight = 1
+        weights = weights / weights.mean()
+
+        return weights
+    # end compute_class_weights_from_dataset
+
     train_dataset = CSGridMLMDataset(train_dir, tokenizer, name_suffix='MLMH_bar_qt')
     val_dataset = CSGridMLMDataset(val_dir, tokenizer, name_suffix='MLMH_bar_qt')
 
     trainloader = DataLoader(train_dataset, batch_size=batchsize, shuffle=True, collate_fn=CSGridMLM_collate_fn)
     valloader = DataLoader(val_dataset, batch_size=batchsize, shuffle=False, collate_fn=CSGridMLM_collate_fn)
-
-    loss_fn=CrossEntropyLoss(ignore_index=-100)
 
     if device_name == 'cpu':
         device = torch.device('cpu')
@@ -72,6 +119,18 @@ def main():
             device = torch.device(device_name)
         else:
             print('Selected device not available: ' + device_name)
+    # end device selection
+    
+    # loss_fn=CrossEntropyLoss(ignore_index=-100)
+    # Precompute once before training
+    class_weights = compute_class_weights_from_dataset(
+        train_dataset, tokenizer, scheme="temp", alpha=0.5
+    )
+
+    # Define loss function with weights
+    loss_fn = torch.nn.CrossEntropyLoss(
+        weight=class_weights.to(device), ignore_index=-100
+    )
     model = GridMLMMelHarm(
         d_model=512, 
         nhead=8, 

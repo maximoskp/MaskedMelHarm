@@ -1,5 +1,35 @@
 import torch
 import torch.nn as nn
+from torch.nn import TransformerEncoderLayer
+
+import torch
+import torch.nn as nn
+from torch.nn import TransformerEncoderLayer
+
+class TransformerEncoderLayerWithAttn(TransformerEncoderLayer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.last_attn_weights = None  # place to store the weights
+
+    def forward(self, src, src_mask=None, src_key_padding_mask=None, **kwargs):
+        # same as parent forward, except we intercept attn_weights
+        src2, attn_weights = self.self_attn(
+            src, src, src,
+            attn_mask=src_mask,
+            key_padding_mask=src_key_padding_mask,
+            need_weights=True,
+            average_attn_weights=False
+        )
+        self.last_attn_weights = attn_weights.detach()  # store for later
+
+        # rest of the computation is copied from TransformerEncoderLayer
+        src = src + self.dropout1(src2)
+        src = self.norm1(src)
+        src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
+        src = src + self.dropout2(src2)
+        src = self.norm2(src)
+        return src
+# end TransformerEncoderLayerWithAttn
 
 class GridMLMMelHarm(nn.Module):
     def __init__(self, 
@@ -37,7 +67,13 @@ class GridMLMMelHarm(nn.Module):
         self.stage_proj = nn.Linear(self.d_model + self.stage_embedding_dim, self.d_model, device=self.device)
 
         # Transformer Encoder
-        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, 
+        # encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, 
+        #                                            nhead=nhead, 
+        #                                            dim_feedforward=dim_feedforward,
+        #                                            dropout=dropout,
+        #                                            activation='gelu',
+        #                                            batch_first=True)
+        encoder_layer = TransformerEncoderLayerWithAttn(d_model=d_model, 
                                                    nhead=nhead, 
                                                    dim_feedforward=dim_feedforward,
                                                    dropout=dropout,

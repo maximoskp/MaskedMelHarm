@@ -43,6 +43,7 @@ def init_worker(td, vd, tl, vl, tok):
 
 def train_wrapper(kwargs):
     return train_qt_bar_gmlm(
+        train_dataset=train_dataset,
         trainloader=trainloader,
         valloader=valloader,
         tokenizer=tokenizer,
@@ -68,7 +69,9 @@ if __name__ == "__main__":
             'device_name': 'cuda:0',
             'epochs': epochs,
             'lr': 1e-5,
-            'batchsize': batchsize
+            'batchsize': batchsize,
+            'validations_per_epoch': validations_per_epoch,
+            'tqdm_position': 0
         },
         {
             'curriculum_type': 'random',
@@ -77,7 +80,9 @@ if __name__ == "__main__":
             'device_name': 'cuda:0',
             'epochs': epochs,
             'lr': 1e-5,
-            'batchsize': batchsize
+            'batchsize': batchsize,
+            'validations_per_epoch': validations_per_epoch,
+            'tqdm_position': 1
         },
         {
             'curriculum_type': 'random',
@@ -86,7 +91,9 @@ if __name__ == "__main__":
             'device_name': 'cuda:0',
             'epochs': epochs,
             'lr': 1e-5,
-            'batchsize': batchsize
+            'batchsize': batchsize,
+            'validations_per_epoch': validations_per_epoch,
+            'tqdm_position': 2
         },
         {
             'curriculum_type': 'step',
@@ -95,7 +102,9 @@ if __name__ == "__main__":
             'device_name': 'cuda:0',
             'epochs': epochs,
             'lr': 1e-5,
-            'batchsize': batchsize
+            'batchsize': batchsize,
+            'validations_per_epoch': validations_per_epoch,
+            'tqdm_position': 3
         }
     ]
 

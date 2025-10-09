@@ -14,7 +14,8 @@ curriculum_types = ['random', 'base2']
 
 def train_qt_bar_gmlm(
         train_dataset,
-        val_dataset,
+        trainloader,
+        valloader,
         tokenizer,
         curriculum_type,
         total_stages,
@@ -22,7 +23,9 @@ def train_qt_bar_gmlm(
         device_name,
         epochs=100,
         lr=1e-5,
-        batchsize=8
+        batchsize=8,
+        validations_per_epoch=1,
+        tqdm_position=0
     ):
 
 # def main():
@@ -76,7 +79,54 @@ def train_qt_bar_gmlm(
     # trainloader = DataLoader(train_dataset, batch_size=batchsize, shuffle=True, collate_fn=CSGridMLM_collate_fn)
     # valloader = DataLoader(val_dataset, batch_size=batchsize, shuffle=False, collate_fn=CSGridMLM_collate_fn)
 
-    loss_fn=CrossEntropyLoss(ignore_index=-100)
+    def compute_class_weights_from_dataset(dataset, tokenizer, scheme="temp", alpha=0.5, beta=0.999, ignore_index=-100):
+        """
+        Compute class weights for CrossEntropyLoss given a dataset of chord tokens.
+        
+        Args:
+            dataset: dataset loaded from pickle
+            tokenizer: tokenizer object with vocab (for num_classes)
+            scheme: one of ["inv", "inv_sqrt", "cb", "temp"]
+            alpha: used in temperature-scaled scheme
+            beta: used in class-balanced scheme
+            ignore_index: value used to skip padding/masked tokens
+        
+        Returns:
+            torch.Tensor of shape [num_classes] with normalized class weights
+        """
+        num_classes = len(tokenizer.vocab)
+        counts = torch.zeros(num_classes, dtype=torch.float)
+
+        # Count occurrences of chord tokens across dataset
+        for item in dataset:
+            tokens = torch.tensor(item["input_ids"], dtype=torch.long)
+            tokens = tokens[tokens != ignore_index]  # filter padding/masked tokens
+            counts += torch.bincount(tokens, minlength=num_classes).float()
+
+        freqs = counts / counts.sum()
+
+        # Apply weighting scheme
+        if scheme == "inv":  # 1/p
+            weights = 1.0 / (freqs + 1e-9)
+
+        elif scheme == "inv_sqrt":  # 1/sqrt(p)
+            weights = 1.0 / torch.sqrt(freqs + 1e-9)
+
+        elif scheme == "cb":  # Class-balanced loss
+            effective_num = 1.0 - torch.pow(beta, counts)
+            weights = (1.0 - beta) / (effective_num + 1e-9)
+
+        elif scheme == "temp":  # temperature-scaled: p^-alpha
+            weights = (freqs + 1e-9) ** (-alpha)
+
+        else:
+            raise ValueError(f"Unknown scheme: {scheme}")
+
+        # Normalize so average weight = 1
+        weights = weights / weights.mean()
+
+        return weights
+    # end compute_class_weights_from_dataset
 
     if device_name == 'cpu':
         device = torch.device('cpu')
@@ -85,6 +135,19 @@ def train_qt_bar_gmlm(
             device = torch.device(device_name)
         else:
             print('Selected device not available: ' + device_name)
+    # end device selection
+
+    # loss_fn=CrossEntropyLoss(ignore_index=-100)
+    # Precompute once before training
+    class_weights = compute_class_weights_from_dataset(
+        train_dataset, tokenizer, scheme="temp", alpha=0.5
+    )
+
+    # Define loss function with weights
+    loss_fn = torch.nn.CrossEntropyLoss(
+        weight=class_weights.to(device), ignore_index=-100
+    )
+
     model = GridMLMMelHarm(
         d_model=512, 
         nhead=8, 
@@ -123,7 +186,9 @@ def train_qt_bar_gmlm(
         results_path=results_path,
         transformer_path=transformer_path,
         bar_token_id=tokenizer.bar_token_id,
-        condition='h_density_complexity'
+        condition='h_density_complexity',
+        validations_per_epoch=validations_per_epoch,
+        tqdm_position=tqdm_position
     )
     
 # end main

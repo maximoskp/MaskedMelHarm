@@ -272,7 +272,7 @@ def beam_token_by_token_generate(
         idxs = torch.logical_and(chord_constraints != nc_token_id,
                                  chord_constraints != pad_token_id)
         init_visible_harmony[idxs] = chord_constraints[idxs]
-
+    
     # Compute last active melody index if forcing fill
     if force_fill:
         active = (melody_grid != 0).any(dim=-1).squeeze(0)  # shape: (seq_len,)
@@ -286,7 +286,7 @@ def beam_token_by_token_generate(
     # Each beam is (visible_harmony, score, avg_diffs, prev_logits)
     beams = [(init_visible_harmony.clone(), 0.0, [], None)]
     total_tokens = init_visible_harmony.numel()
-
+    
     step = 0
     while any((bh[0] == mask_token_id).any() for bh in beams):
         if max_steps is not None and step >= max_steps:
@@ -295,6 +295,7 @@ def beam_token_by_token_generate(
         candidates = []
         # print('entering beams==========================================')
         for visible_harmony, score, avg_diffs, prev_logits in beams:
+            
             num_masked = (visible_harmony == mask_token_id).sum().item()
             num_unmasked = total_tokens - num_masked
             s = max(round((num_unmasked / total_tokens) * num_stages)-1, 0)
