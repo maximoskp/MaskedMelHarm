@@ -701,7 +701,7 @@ def _apply_keyed_accidentals(score: stream.Score) -> stream.Score:
     return score
 
 
-def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_steps):
+def overlay_generated_harmony_old_1(melody_part, generated_chords, ql_per_16th, skip_steps):
     """
     Two-part score:
       • melody_measures: original melody in measures
@@ -801,7 +801,7 @@ def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_s
 
 
 
-def overlay_generated_harmony_old(melody_part, generated_chords, ql_per_16th, skip_steps):
+def overlay_generated_harmony_old_0(melody_part, generated_chords, ql_per_16th, skip_steps):
     """
     Build a two‐part Score:
       • melody_measures: your original melody, in measures
@@ -897,7 +897,7 @@ def overlay_generated_harmony_old(melody_part, generated_chords, ql_per_16th, sk
     score.insert(0, chords_part)
     return score
 
-'''
+
 def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_steps):
     # create a part for chords in midi format
     # melody_part = melody_part.makeMeasures()
@@ -1033,7 +1033,7 @@ def overlay_generated_harmony(melody_part, generated_chords, ql_per_16th, skip_s
 
     return score
 # end overlay_generated_harmony
-'''
+
 
 def save_harmonized_score(score, title="Harmonized Piece", out_path="harmonized.xml"):
     score.metadata = metadata.Metadata()

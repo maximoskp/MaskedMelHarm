@@ -139,7 +139,8 @@ models = {
 }
 
 # add SE models found under this folder automatically
-SE_PARENT = "/media/maindisk/tsamis/repos/MaskedMelHarm/saved_models/SE"
+# SE_PARENT = "/media/maindisk/tsamis/repos/MaskedMelHarm/saved_models/SE"
+SE_PARENT = "saved_models/SE"
 models.update(build_se_modular_models_from_root(SE_PARENT, DEVICE))
 
 print("✅ Models ready")
@@ -150,6 +151,7 @@ print("✅ Models ready")
 # ------------------------------------------------------------------
 def harmonise(file_path: str,
               variant: str,
+              unmasking_order: str,
               constraints: bool):
     # ---------------- choose model & generation routine ----------
     if variant.startswith("base2"):
@@ -179,7 +181,7 @@ def harmonise(file_path: str,
         normalize_tonality = need_norm,
         temperature=0.2,
         p=0.9,
-        unmasking_order='start',
+        unmasking_order=unmasking_order,
         num_stages=10,
         use_conditions=None if 'bar' in variant else 16,
         create_gen=True,
@@ -264,15 +266,22 @@ with gr.Blocks(css=css) as demo:
             gr.Markdown("### 2. Choose model")
             variant = gr.Dropdown(
                 choices=list(models.keys()),
-                value="base2 • Cmaj/Amin",
+                value="SE • Q4_L80_bar_PC • f2f",
                 label="Model variant"
             )
+            gr.Markdown("### 3. Choose unmasking order")
+            unmasking_order = gr.Dropdown(
+                choices=['start', 'end', 'random', 'certain', 'uncertain'],
+                value="certain",
+                label="Unmasking order"
+            )
             constraints = gr.Checkbox(label="Respect chord-constraints", value=True)
+            # constraints = False
             run_btn = gr.Button("Harmonise 🎹", variant="primary")
 
         # ---------- RIGHT COLUMN : generated result ----------
         with gr.Column():
-            gr.Markdown("### 3. Generated harmonisation")
+            gr.Markdown("### 4. Generated harmonisation")
             gen_viewer = gr.HTML()
             mxl_out    = gr.File(label="Download MusicXML", elem_classes="small-file")
             mid_out    = gr.File(label="Download MIDI", elem_classes="small-file")
@@ -280,7 +289,7 @@ with gr.Blocks(css=css) as demo:
     # wiring
     run_btn.click(
         fn=harmonise,
-        inputs=[preproc_midi, variant, constraints],
+        inputs=[preproc_midi, variant, unmasking_order, constraints],
         outputs=[gen_viewer, mxl_out, mid_out],
     )
 
